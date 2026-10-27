@@ -1,6 +1,6 @@
 # Money Seasons — development plan
 
-**Status:** interactive local mockup accepted by Sinh as the starting foundation. Detailed personal requirements and full MVP scope remain under review. A follow-up requirements ticket has been requested; none created yet.
+**Status:** interactive local mockup accepted by Sinh as the starting foundation. Detailed personal requirements and full MVP scope remain under review. The requested requirements ticket **MS-001** is created (`idea`, assigned to `sinh`).
 
 Based on discovery in **PA:d-830b2f/rogue-one/rogue-one**, the planning discussion in **PA:d-8b8b88/rogue-one/rogue-one**, and the latest mockup request in **PA:d-b356fa/rogue-one/rogue-one**. The latest request explicitly advances a mockup plus a local server/Docker foundation before design/flow confirmation and further tickets; it supersedes the earlier documentation-only pause for this slice only.
 
@@ -11,7 +11,7 @@ Based on discovery in **PA:d-830b2f/rogue-one/rogue-one**, the planning discussi
 - Start local-only. The mockup now has a small static Node server and loopback-bound Docker deployment on this machine; a financial-data backend or external self-hosting remains deferred.
 - Keep forecasts approximate and understandable rather than attempting accounting-level precision.
 - Support current money and future income/expenses, planned and actual amounts, existing and tentative commitments, and a simple view of existing assets/debts alongside future plans.
-- Keep the plan and ticket references in this repository. Sinh has authorized saving the foundation and creating one follow-up requirements ticket, not implementing the full MVP or converting all existing drafts.
+- Keep the plan and ticket references in this repository. Sinh authorized saving the foundation and creating one follow-up requirements ticket. Foundation commit `ca0fda1` / tag `foundation-v0.1` is saved and **MS-001** is created; this does not authorize implementing the full MVP or converting all existing drafts.
 - Sinh selected **Vietnamese + VND** for the first mockup. Other finance rules and architecture choices in the mockup are provisional.
 
 ## Current review slice
@@ -78,7 +78,7 @@ These are implementation guardrails. The exact monthly rules below still require
 | Decision | Resolution point |
 |---|---|
 | Vietnamese/VND selected for the mockup; confirm long-term language/currency scope | MS-D01 |
-| Follow-up period requested: November 2026–December 2027 (14 consecutive months); opening balance reference and extended-period rules to settle | Requested requirements ticket; MS-D01 |
+| Follow-up period requested: November 2026–December 2027 (14 consecutive months); opening balance reference and extended-period rules to settle | MS-001 (requirements); related historical MS-D01 |
 | Which confirmed/tentative items enter the default estimate, and how alternatives are shown | MS-D01 |
 | Where actual amounts apply, including partial, late, cancelled, or changed payments | MS-D01; explicitly defer unsupported states |
 | Minimal recurrence rules, annual occurrences, and changes to future plans | MS-D01 |
@@ -89,7 +89,7 @@ These are implementation guardrails. The exact monthly rules below still require
 
 ## Development sequence and gates
 
-The [ticket drafts](tickets.md) use local identifiers only. They are not registered PA tickets and are not marked ready for implementation.
+The [ticket index](tickets.md) links active requirements ticket **MS-001**, the next step with Sinh. The historical **MS-Dxx** drafts below use local identifiers only; they are not registered PA tickets or marked ready for implementation.
 
 | Stage | Drafts | Exit evidence |
 |---|---|---|
@@ -107,4 +107,4 @@ Discovery history remains in the [original project notes](../../tools/learning-m
 
 This repository owns the development plan and local implementation ticket drafts from this discussion onward. Do not maintain a second implementation backlog in the discovery repository. The earlier discovery roadmap remains historical/proposed where it differs from this discussion.
 
-**Next action:** save the accepted foundation and create the requested requirements ticket for Sinh's details and November 2026–December 2027 planning. Collect/confirm personal usage requirements before implementation, then revise the related drafts rather than converting them wholesale. Foundation acceptance does not settle production architecture or constitute detailed task-level UAT.
+**Next action:** work through **MS-001** with Sinh to confirm details and usage requirements for November 2026–December 2027 before implementation. Keep actual financial records out of Git and the ticket, record only non-sensitive requirements/decisions, and revise related historical drafts rather than converting them wholesale. Foundation acceptance does not settle production architecture or constitute detailed task-level UAT.

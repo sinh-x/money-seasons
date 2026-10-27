@@ -1,16 +1,28 @@
-# Money Seasons — local ticket drafts
+# Money Seasons — ticket index and historical drafts
 
-**Status: historical drafts for Sinh's review. No PA tickets created yet. Sinh accepted the mockup/local Docker foundation and requested one follow-up requirements ticket; full MVP implementation is not approved.**
+**Status: requirements ticket MS-001 created. Sinh accepted the mockup/local Docker foundation; full MVP implementation is not approved.**
 
-These local IDs are planning references, not PA ticket numbers. Scope follows the [development plan](development-plan.md): a personal, local-only tool for one individual or one family, with lightweight setup and approximate annual/monthly planning.
+## Active requirements ticket
 
-All tickets remain **Draft**. Dependencies describe proposed ordering, not approval. Sinh is the scope and user-acceptance decision owner. Vietnamese/VND is selected for the mockup; final finance rules, product scope and long-term stack remain subject to review. No delivery dates or estimates are committed.
+| PA ID | Title | Status | Owner |
+|---|---|---|---|
+| **MS-001** | Gather Sinh's usage requirements for November 2026–December 2027 planning | idea — requirements/input first | sinh |
+
+View the canonical ticket with `ppa ticket show MS-001`. It covers personal input needs and usage adjustments for a continuous **14-month** plan, including opening-balance reference, cross-year carry-forward/recurrence/actuals, and safe preservation of existing 2027 data. This is a requirements ticket, not implementation authorization. Keep personal financial values in an agreed private location, not in Git or PA ticket content. Do not duplicate the ticket's acceptance criteria here.
+
+Saved foundation: commit `ca0fda1`, annotated tag `foundation-v0.1`. No other draft has been converted.
+
+## Historical local drafts
+
+The **MS-Dxx** local IDs below are planning references, not PA ticket numbers. Scope follows the [development plan](development-plan.md): a personal, local-only tool for one individual or one family, with lightweight setup and approximate annual/monthly planning.
+
+All **MS-Dxx historical drafts** remain **Draft**. This does not describe the separate registered MS-001 requirements ticket. Dependencies describe proposed ordering, not approval. Sinh is the scope and user-acceptance decision owner. Vietnamese/VND is selected for the mockup; final finance rules, product scope and long-term stack remain subject to review. No delivery dates or estimates are committed.
 
 ## Mockup evidence — not ticket completion
 
-The latest request advanced a local interactive mockup before final design/flow agreement. It provides partial exploration/evidence relevant to D02–D07, but does not close their scope or human-review gates. The static server/Docker foundation is an explicit update to the earlier browser-only deployment boundary; there is still no financial-data backend. See [mockup assumptions, test results and review checklist](mockup.md). Sinh has now accepted it as a starting foundation and requested a requirements ticket for personal inputs/usage adjustments and November 2026–December 2027 planning. This is not detailed completion of these drafts. Create only that requested follow-up and link its canonical ID here; do not create a parallel implementation backlog.
+The latest request advanced a local interactive mockup before final design/flow agreement. It provides partial exploration/evidence relevant to D02–D07, but does not close their scope or human-review gates. The static server/Docker foundation is an explicit update to the earlier browser-only deployment boundary; there is still no financial-data backend. See [mockup assumptions, test results and review checklist](mockup.md). Sinh has now accepted it as a starting foundation and requested a requirements ticket for personal inputs/usage adjustments and November 2026–December 2027 planning. This is not detailed completion of these drafts. The requested follow-up is now **MS-001** above. Use it as the canonical next requirements work item, reconcile related drafts after Sinh's input, and do not create a parallel implementation backlog.
 
-## Overview
+## Historical draft overview
 
 | Local ID | Title | Depends on |
 |---|---|---|

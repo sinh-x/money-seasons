@@ -2,13 +2,15 @@
 
 **Deployment:** PA:d-b356fa · **Date:** 2026-10-27 · **State:** accepted by Sinh as a starting foundation; detailed usage requirements and task-level acceptance remain open.
 
-The current request is to build a mockup with a base server/Docker setup on this machine, use it to confirm the design/flow, then create further tickets. This intentionally advances a small prototype ahead of the earlier documentation-only gates. It does **not** approve every draft acceptance criterion, production architecture, or a full MVP rollout. No PA tickets have been created.
+The current request is to build a mockup with a base server/Docker setup on this machine, use it to confirm the design/flow, then create further tickets. This intentionally advances a small prototype ahead of the earlier documentation-only gates. It does **not** approve every draft acceptance criterion, production architecture, or a full MVP rollout. The requested follow-up requirements ticket **MS-001** has now been created; no implementation ticket has been created.
 
 Sinh explicitly selected **Vietnamese + VND** for this mockup. All other decisions below are prototype assumptions for discussion.
 
 ## Foundation acceptance
 
 Sinh's follow-up: “all good this is a good start”, with an explicit request to commit/save this foundation and create a **requirements** ticket for personal details and usage adjustments, including **November 2026 through December 2027** (14 consecutive months). This accepts the starting foundation, not every detailed review task below or the full MVP. The current code still supports January–December of one year; the extended period is follow-up scope, not implemented here. No personal balances or financial records have been collected or committed.
+
+Saved checkpoint: commit `ca0fda1`, annotated tag `foundation-v0.1`. The active follow-up is **MS-001** (`idea`, assigned to `sinh`) — requirements gathering for personal input needs and usage adjustments across November 2026–December 2027. Use `ppa ticket show MS-001` for the canonical scope and acceptance criteria. The app itself has not been changed to support that period yet.
 
 ## What is usable
 
@@ -135,4 +137,4 @@ Open **http://localhost:3080** and use only sample data at first.
 - [ ] Decide whether asset/debt inventory and preparation targets belong in the next slice or later.
 - [ ] Decide whether browser-only finance storage is sufficient for now, or a local server database is actually needed.
 
-Record feedback before modifying the backlog. Then refine [MS-D01/D02 and downstream drafts](tickets.md), separate agreed behavior from open questions, and create real tickets only on request. **Do not mark the drafts accepted based on the implementation or these automated results.**
+Record feedback and non-sensitive requirement decisions in **MS-001**, then reconcile [the related historical drafts](tickets.md), separating agreed behavior from open questions. Keep actual financial values in an agreed private location. No further tickets or implementation are authorized just by creating MS-001. **Do not mark all draft criteria accepted based on foundation approval or automated results.**

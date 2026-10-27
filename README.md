@@ -89,7 +89,7 @@ BROWSER_PATH="$(command -v google-chrome)" npm run test:browser
 - `public/app.js`, `public/index.html`, `public/styles.css` — responsive interactive mockup.
 - `Dockerfile`, `compose.yaml` — non-root, read-only, health-checked local container.
 - `test/`, `scripts/browser-check.mjs` — deterministic and browser checks.
-- [Development plan](docs/development-plan.md), [local ticket drafts](docs/tickets.md) — future scope; **no PA tickets created**.
+- [Development plan](docs/development-plan.md), [ticket index and historical drafts](docs/tickets.md) — active requirements ticket **MS-001**, separate from unapproved MVP drafts.
 
 ## Planning and discovery
 
@@ -103,4 +103,6 @@ Original discovery remains in the sibling learning-management repository:
 
 Those links assume the local workspace layout and do not resolve in an isolated clone. This repository owns the implementation drafts; do not maintain a duplicate backlog there. No remote has been configured.
 
-**Next:** create the requested requirements ticket for Sinh's personal inputs and usage adjustments, including a continuous **November 2026–December 2027** plan. The current implementation remains single-year; this request does not implement the extension or approve every MVP rule. Sinh's foundation acceptance is recorded in [mockup notes](docs/mockup.md#foundation-acceptance), separately from automated verification.
+**Saved foundation:** commit `ca0fda1`, annotated tag `foundation-v0.1`.
+
+**Next:** requirements ticket **MS-001** gathers Sinh's personal input needs and usage adjustments, including a continuous **November 2026–December 2027** plan (14 months). View it with `ppa ticket show MS-001`. The current implementation remains single-year; the ticket is requirements-only and does not start implementation or approve every MVP rule. Sinh's foundation acceptance is recorded in [mockup notes](docs/mockup.md#foundation-acceptance), separately from automated verification.
