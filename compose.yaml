@@ -1,0 +1,21 @@
+name: money-seasons
+services:
+  web:
+    build: .
+    ports:
+      - "127.0.0.1:${MONEY_SEASONS_PORT:-3080}:3080"
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 64
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"

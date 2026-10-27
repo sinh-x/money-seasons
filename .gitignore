@@ -1,0 +1,32 @@
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Private financial data; use synthetic committed fixtures instead
+/private-data/
+/local-data/
+/exports/
+/backups/
+*.sqlite
+*.sqlite3
+*.db
+
+# Generated dependencies, builds and test artifacts
+node_modules/
+.venv/
+__pycache__/
+/dist/
+/build/
+/coverage/
+/test-results/
+/playwright-report/
+*.log
+
+# Editor / operating-system files
+.idea/
+.vscode/
+.DS_Store
+*~

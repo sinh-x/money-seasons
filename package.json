@@ -1,0 +1,21 @@
+{
+  "name": "money-seasons",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local Vietnamese family finance planning prototype",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs",
+    "test": "node --test",
+    "test:browser": "node scripts/browser-check.mjs",
+    "check": "node --check server.mjs && node --check public/app.js && node --check public/model.js"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.11.1",
+    "playwright": "1.63.0"
+  }
+}
