@@ -82,6 +82,10 @@ BROWSER_PATH="$(command -v google-chrome)" npm run test:browser
 
 `BASE_URL` overrides the target. Screenshots default to `/tmp/money-seasons-check`; `BROWSER_ARTIFACTS` overrides that directory. The browser runner uses synthetic data in isolated profiles and never opens your normal browser profile. It covers the core flow, storage/import failures, responsive widths and automated accessibility scans. These are **not human acceptance**.
 
+## Branching
+
+Use `main` for stable releases, `develop` for integration, and `feature/<short-description>` for changes branched from and merged back into `develop`. See the [Git Flow guide](docs/branching.md) for local setup, feature commands, releases, hotfixes, and future remote protection settings.
+
 ## Files
 
 - `server.mjs` — bounded static HTTP server and health endpoint.
