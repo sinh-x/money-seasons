@@ -1,4 +1,4 @@
-import { MAX_BYTES, blankPlan, demoPlan, validatePlan, forecast, monthRange, occurs, plannedAmount, changeWindow, reviseEstimate, latestSnapshot, cashBaseline, debtTotal, setSnapshot, convertLegacy, todayISO } from './model.js';
+import { MAX_BYTES, blankPlan, demoPlan, validatePlan, forecast, monthRange, occurs, plannedAmount, estimateMonth, changeWindow, reviseEstimate, latestSnapshot, cashBaseline, debtTotal, setSnapshot, convertLegacy, todayISO } from './model.js';
 import { parseAmount, formatAmountInput } from './amount-input.js';
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const h = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -97,8 +97,9 @@ function itemPage(kind) {
       const rows = items.filter(i => i.objectId === o.id);
       return `<article class="object-card" data-object="${h(o.id)}"><header class="object-header"><div class="object-identity"><span class="object-icon ${o.type}" aria-hidden="true">${TYPES[o.type][0]}</span><div><h2 class="object-title">${h(o.name)}</h2><small>${TYPES[o.type][1]} · Mã ${h(o.id.slice(-8))} · dùng chung hai trang</small><div>${button('Đổi tên / loại', 'object', `data-id="${h(o.id)}" data-mutate`, 'text small')}${button('Xóa đối tượng', 'delete-object', `data-id="${h(o.id)}" data-mutate`, 'text small danger')}</div></div></div><div class="object-total"><strong>${h(sumText(sumItems(rows, selectedMonth)))}</strong><small>Dự kiến ${label(selectedMonth)}</small></div></header>
       ${rows.length ? `<div class="object-rows">${rows.map(i => {
-        const month = range().find(m => m >= selectedMonth && occurs(i, m)) ?? range().filter(m => occurs(i, m)).at(-1);
-        return `<div class="detail-row"><div><strong>${h(i.name)}</strong><p>${h(i.description)}</p><small>${h(schedule(i))}${i.status === 'tentative' ? ' · Đang cân nhắc' : ''}</small></div><div class="row-actions">${button(h(money(plannedAmount(i, month))), 'item', `data-id="${h(i.id)}" data-month="${month}" data-mutate`, 'amount-button')}${button('Sửa chi tiết', 'item', `data-id="${h(i.id)}" data-mutate`, 'small')}${button('Xóa', 'delete-item', `data-id="${h(i.id)}" data-mutate aria-label="Xóa ${h(i.name)}"`, 'small danger')}</div></div>`;
+        const month = estimateMonth(i, selectedMonth);
+        const scopeNote = !range().some(m => occurs(i, m)) ? ' · Ngoài kỳ dự báo · lịch vẫn được lưu' : i.recurrence.anchor < plan.startMonth || i.recurrence.end > plan.endMonth ? ' · Chỉ tính phần lịch trong kỳ dự báo' : '';
+        return `<div class="detail-row"><div><strong>${h(i.name)}</strong><p>${h(i.description)}</p><small>${h(schedule(i))}${h(scopeNote)}${i.status === 'tentative' ? ' · Đang cân nhắc' : ''}</small></div><div class="row-actions">${button(h(money(plannedAmount(i, month))), 'item', `data-id="${h(i.id)}" data-month="${month}" data-mutate`, 'amount-button')}${button('Sửa chi tiết', 'item', `data-id="${h(i.id)}" data-mutate`, 'small')}${button('Xóa', 'delete-item', `data-id="${h(i.id)}" data-mutate aria-label="Xóa ${h(i.name)}"`, 'small danger')}</div></div>`;
       }).join('')}</div>` : '<p class="empty">Chưa có khoản chi. Ghi điều cần chuẩn bị trước, chưa cần biết tiền.</p>'}
       <footer class="object-footer">${button(`＋ Thêm chi tiết ${expense ? 'chi' : 'thu'}`, 'item', `data-kind="${kind}" data-object="${h(o.id)}" data-mutate`, 'text')}<span class="object-meta">Không ghi thực tế</span></footer></article>`;
     }).join('') || '<p class="empty panel">Chưa có đối tượng phù hợp. Tạo đối tượng hoặc thêm khoản thu để bắt đầu.</p>'}</section>`;
@@ -171,7 +172,7 @@ function objectDialog(id) {
 function itemDialog({ id, kind = 'expense', objectId, month = selectedMonth, suggestion = '' } = {}) {
   if (!plan.objects.length) { objectDialog(); toast('Tạo đối tượng trước, sau đó thêm chi tiết.'); return; }
   const item = plan.items.find(i => i.id === id); if (item) kind = item.type;
-  const effective = item ? range().find(m => m >= month && occurs(item, m)) ?? range().filter(m => occurs(item, m)).at(-1) : month;
+  const effective = item ? estimateMonth(item, month) : month;
   const r = item?.recurrence ?? { kind: 'once', anchor: month, end: month, everyMonths: 1 };
   openEditor(`${item ? 'Chỉnh' : 'Thêm'} khoản ${kind === 'income' ? 'thu' : 'chi'}`, 'Chọn đối tượng → mục đích → chi tiết & lịch → số tiền sau. Không ghi thực tế.',
     field('Đối tượng dùng chung', `<select name="objectId">${plan.objects.map(o => `<option value="${h(o.id)}" ${o.id === (item?.objectId ?? objectId) ? 'selected' : ''}>${h(objectLabel(o))}</option>`).join('')}</select>`, '', true) +
@@ -180,8 +181,8 @@ function itemDialog({ id, kind = 'expense', objectId, month = selectedMonth, sug
     field('Mức xác định', `<select name="status"><option value="confirmed">Đưa vào kế hoạch</option><option value="tentative" ${item?.status === 'tentative' ? 'selected' : ''}>Đang cân nhắc</option></select>`) +
     field('Lặp lại', `<select name="repeat"><option value="once">Một lần</option><option value="monthly" ${r.kind === 'interval' && r.everyMonths === 1 ? 'selected' : ''}>Hằng tháng</option><option value="interval" ${r.kind === 'interval' && ![1, 12].includes(r.everyMonths) ? 'selected' : ''}>Mỗi N tháng</option><option value="yearly" ${r.kind === 'interval' && r.everyMonths === 12 ? 'selected' : ''}>Hằng năm</option></select>`) +
     field('Khoảng lặp N', `<input name="everyMonths" type="number" min="1" max="120" step="1" value="${r.everyMonths}">`, 'Chỉ dùng khi chọn Mỗi N tháng.') +
-    field('Tháng bắt đầu', `<input name="start" type="month" required value="${r.anchor}" min="${plan.startMonth}" max="${plan.endMonth}">`) +
-    field('Kết thúc (lịch lặp)', `<input name="end" type="month" value="${r.end}" min="${plan.startMonth}" max="2100-12">`, 'Không tự kéo dài khi đổi kỳ.') +
+    field('Tháng bắt đầu', `<input name="start" type="month" required value="${r.anchor}" min="2000-01" max="2100-12">`, 'Lịch được lưu độc lập với kỳ dự báo.') +
+    field('Kết thúc (lịch lặp)', `<input name="end" type="month" value="${r.end}" min="2000-01" max="2100-12">`, 'Có thể ngoài kỳ dự báo. Chỉ tháng giao nhau được tính; không tự mở rộng kỳ.') +
     (item ? field('Tháng hiệu lực số dự kiến', `<input name="effectiveMonth" type="month" required value="${effective}" min="${r.anchor}" max="${r.end}">`, 'Giữ các mốc sau đó; mọi thay đổi số tiền đều xem trước và xác nhận.', true) : ''),
     async f => {
       const next = structuredClone(plan), repeat = f.repeat.value, n = repeat === 'yearly' ? 12 : repeat === 'interval' ? Number(f.everyMonths.value) : 1;
@@ -223,7 +224,7 @@ function snapshotDialog(accountId, debt = false, date) {
 }
 function setupDialog(isNew = false) {
   const source = isNew ? blankPlan() : plan;
-  openEditor(isNew ? 'Kế hoạch trống mới' : 'Chỉnh kế hoạch', '1–120 tháng trong 2000–2100. Không tự kéo dài lịch thu chi; không dùng số dư hôm nay làm tiền lịch sử.',
+  openEditor(isNew ? 'Kế hoạch trống mới' : 'Chỉnh kế hoạch', 'Kỳ dự báo 1–120 tháng trong 2000–2100. Giữ nguyên toàn bộ lịch thu chi, kể cả ngoài kỳ; chỉ tính các tháng giao nhau. Không dùng số dư hôm nay làm tiền lịch sử.',
     field('Tên kế hoạch', `<input name="name" required maxlength="80" value="${h(source.name)}">`, '', true) +
     field('Tháng đầu', `<input name="startMonth" type="month" min="2000-01" max="2100-12" required value="${source.startMonth}">`) +
     field('Tháng cuối', `<input name="endMonth" type="month" min="2000-01" max="2100-12" required value="${source.endMonth}">`),
@@ -246,7 +247,7 @@ function prepareMigration(raw, fromServer = false) {
     async () => { if (!migration.downloaded) throw new Error('Tải nguyên bản trước khi xác nhận.'); confirmChange('Thay kế hoạch bằng bản chuyển?', 'Hãy giữ nguyên bản xuất ở nơi an toàn. Việc chuyển chỉ giữ kế hoạch, năm-tháng, mã và các mốc ước tính; không chuyển thực tế hoặc suy đoán số dư tiền.', () => saveAndClose(migration.next, 'replace', !!serverLegacy)); }, 'Xem trước chuyển');
 }
 function helpDialog() {
-  openEditor('Hướng dẫn & khôi phục', 'Ước tính theo tháng, không phải kế toán.', `<div class="field full"><h3>Số tiền và số dư</h3><p>Số trống là chưa biết; 0 là đã biết. Nhập 5 nghĩa là 5.000 ₫, nhập 5000 VND là 5.000 ₫. Xem giá trị trước khi lưu. Số dư tài khoản dùng ngày Asia/Ho_Chi_Minh. Mốc mới đặt lại cơ sở gộp; không có mốc mới thì chuyển tiếp. Luôn tính cả kế hoạch tháng cập nhật.</p><h3>Thu chi và công nợ</h3><p>Đối tượng dùng chung, chi tiết thu/chi riêng. Chỉnh ước tính từ tháng được chọn và giữ các mốc khác. Công nợ tách khỏi tiền mặt; kế hoạch trả nợ là chi, thu hồi là thu. Không tự giảm dư nợ, không ghi thực tế, tính lãi hoặc ngân hàng.</p><h3>Lưu & khôi phục</h3><p>Một JSON riêng tư trên laptop; mọi thành viên sửa như nhau. Laptop phải chạy và truy cập được qua Tailscale HTTPS riêng tư. Không có sao lưu tự động, không mã hóa ổ đĩa; laptop không phải bản sao lưu. Xuất JSON riêng, giữ an toàn.</p><p>Xung đột/lỗi lưu giữ bản sửa chưa lưu. Xuất trước khi đóng; đọc lại trạng thái trước khi thử lại. Nạp bản máy chủ rồi áp dụng lại bằng tay, không tự gộp. Tệp hỏng/độ bền chưa rõ cần người vận hành; không tự đặt lại hoặc chiếm khóa.</p>${button('Thay bằng mẫu tổng hợp…', 'demo', 'type="button" data-mutate')}</div>`, null);
+  openEditor('Hướng dẫn & khôi phục', 'Ước tính theo tháng, không phải kế toán.', `<div class="field full"><h3>Số tiền và số dư</h3><p>Số trống là chưa biết; 0 là đã biết. Nhập 5 nghĩa là 5.000 ₫, nhập 5000 VND là 5.000 ₫. Xem giá trị trước khi lưu. Số dư tài khoản dùng ngày Asia/Ho_Chi_Minh. Mốc mới đặt lại cơ sở gộp; không có mốc mới thì chuyển tiếp. Luôn tính cả kế hoạch tháng cập nhật.</p><h3>Thu chi và công nợ</h3><p>Đối tượng dùng chung, chi tiết thu/chi riêng. Lưu toàn bộ lịch thu/chi, kể cả trước hoặc sau kỳ dự báo; chỉ tính các tháng giao nhau. Đổi kỳ dự báo không cắt hay kéo dài lịch. Chỉnh ước tính từ tháng được chọn và giữ các mốc khác. Công nợ tách khỏi tiền mặt; kế hoạch trả nợ là chi, thu hồi là thu. Không tự giảm dư nợ, không ghi thực tế, tính lãi hoặc ngân hàng.</p><h3>Lưu & khôi phục</h3><p>Một JSON riêng tư trên laptop; mọi thành viên sửa như nhau. Laptop phải chạy và truy cập được qua Tailscale HTTPS riêng tư. Không có sao lưu tự động, không mã hóa ổ đĩa; laptop không phải bản sao lưu. Xuất JSON riêng, giữ an toàn.</p><p>Xung đột/lỗi lưu giữ bản sửa chưa lưu. Xuất trước khi đóng; đọc lại trạng thái trước khi thử lại. Nạp bản máy chủ rồi áp dụng lại bằng tay, không tự gộp. Tệp hỏng/độ bền chưa rõ cần người vận hành; không tự đặt lại hoặc chiếm khóa.</p>${button('Thay bằng mẫu tổng hợp…', 'demo', 'type="button" data-mutate')}</div>`, null);
 }
 $('#editor').addEventListener('input', updatePreviews);
 $('#editor').addEventListener('close', restoreFocus);

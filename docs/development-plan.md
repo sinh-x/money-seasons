@@ -16,7 +16,7 @@ Commit identities and latest local evidence: [verification.md](verification.md).
 ## Behavior retained/revised
 
 - Vietnamese/VND; rough inputs, exact arithmetic; unknown distinct from0.
-- Default2026-11–2027-12, configurable1–120 months; original years and chronological carry retained.
+- Default2026-11–2027-12, configurable1–120 forecast months; original years and chronological carry retained. Subsequently confirmed: save full income/expense schedules independently, even beyond120 months within2000–2100; forecast only the intersection. Shrinking/moving the forecast preserves schedules/estimate history and keeps outside-window details editable.
 - Shared Person/Group/Category registry, icons only; separate income/expense details. Income shows only objects with income entries, regardless of amount/schedule/status.
 - Amount input defaults to thousands with shared previews and explicit-VND edit round trips.
 - Dated account snapshots replace manual undated opening cash. Latest applicable reference date wins. A monthly refresh restarts the mixed-date pooled baseline; full-month plans apply. Otherwise carry forward. This is approximate planning, not reconciliation.

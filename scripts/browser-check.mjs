@@ -139,6 +139,35 @@ try {
     const state = await snapshot(page), result = forecast(state.plan);
     assert.equal(result[0].expense, 5000000); assert.equal(result[1].expense, 5000000); assert.equal(result[2].expense, 10000);
   });
+  await check('full schedules independent of forecast, outside-window editing and safe window changes', async () => {
+    const original = (await snapshot(page)).plan;
+    await nav(page, 'expense');
+    await item(page, { name: 'Synthetic long annual', amount: '10 VND', repeat: 'yearly', start: '2027-10', end: '2037-10' }); await submit(page);
+    let state = await snapshot(page);
+    assert.equal(state.plan.endMonth, '2027-12');
+    assert.equal(state.plan.items.find(i => i.name === 'Synthetic long annual').recurrence.end, '2037-10');
+    assert.deepEqual(forecast(state.plan).filter(m => m.entries.some(i => i.name === 'Synthetic long annual')).map(m => m.month), ['2027-10']);
+    await item(page, { name: 'Synthetic past once', amount: '0', repeat: 'once', start: '2020-01', end: '2020-01' }); await submit(page);
+    await nav(page, 'income');
+    await item(page, { kind: 'income', name: 'Synthetic future unknown', amount: '', repeat: 'once', start: '2040-01', end: '2040-01' }); await submit(page);
+    assert.equal(await page.locator('.object-card').count(), 1);
+    const future = page.locator('.detail-row').filter({ hasText: 'Synthetic future unknown' });
+    assert.ok((await future.textContent()).includes('Ngoài kỳ dự báo'));
+    await future.locator('[data-action=item]').first().click();
+    assert.equal(await page.locator('[name=effectiveMonth]').inputValue(), '2040-01');
+    await page.locator('[name=amount]').fill('0'); await submit(page, true);
+    state = await snapshot(page); const fullItems = structuredClone(state.plan.items);
+    assert.ok(forecast(state.plan).every(m => m.incomeMissing === 0));
+    await page.locator('#settings-button').click(); await page.locator('[name=startMonth]').fill('2028-01'); await page.locator('[name=endMonth]').fill('2028-06'); await submit(page, true);
+    state = await snapshot(page); assert.deepEqual(state.plan.items, fullItems); assert.ok(forecast(state.plan).every(m => m.entries.length === 0));
+    await nav(page, 'expense');
+    const past = page.locator('.detail-row').filter({ hasText: 'Synthetic past once' });
+    await past.locator('[data-action=item]').first().click(); assert.equal(await page.locator('[name=effectiveMonth]').inputValue(), '2020-01'); await submit(page);
+    const long = page.locator('.detail-row').filter({ hasText: 'Synthetic long annual' });
+    await long.locator('[data-action=item]').first().click(); assert.equal(await page.locator('[name=effectiveMonth]').inputValue(), '2028-10'); await close(page);
+    await page.reload(); await visible(page, '#application'); assert.deepEqual((await snapshot(page)).plan.items, fullItems);
+    await importPlan(page, original);
+  });
   await check('cash account dates/required amounts, same-day correction confirmation', async () => {
     await nav(page, 'accounts'); await page.locator('[data-action=account]:not([data-id])').click(); await page.locator('[name=name]').fill('Synthetic A'); await submit(page);
     await page.locator('[data-action=snapshot]').first().click(); await axe(page, 'cash-snapshot');

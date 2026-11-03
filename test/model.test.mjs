@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { blankPlan, validatePlan, forecast, monthRange, changeWindow, reviseEstimate, occurs, plannedAmount, convertLegacy, MAX_AMOUNT } from '../public/model.js';
+import { blankPlan, validatePlan, forecast, monthRange, changeWindow, reviseEstimate, occurs, plannedAmount, estimateMonth, convertLegacy, MAX_AMOUNT } from '../public/model.js';
 export const syntheticItem = (changes = {}) => ({ id: 'one', objectId: 'family', name: 'Synthetic', description: '', type: 'expense', status: 'confirmed', amount: 10,
   recurrence: { kind: 'interval', anchor: '2026-11', end: '2027-12', everyMonths: 1 }, amountChanges: [], ...changes });
 export function scenario(changes = {}) {
@@ -11,8 +11,49 @@ test('default 14 months, exact boundaries and safe configurable window', () => {
   assert.equal(monthRange('2000-01', '2000-01').length, 1);
   assert.equal(monthRange('2091-01', '2100-12').length, 120);
   for (const [a, b] of [['1999-12', '2000-01'], ['2100-12', '2101-01'], ['2027-02', '2027-01'], ['2000-01', '2010-01']]) assert.throws(() => monthRange(a, b));
-  const p = scenario(); assert.throws(() => changeWindow(p, '2026-12', p.endMonth));
+  const p = scenario(); assert.deepEqual(changeWindow(p, '2026-12', p.endMonth).items, p.items);
   assert.deepEqual(changeWindow(p, p.startMonth, '2028-01').items, p.items);
+});
+test('full long-term schedule saved unchanged, forecast only intersects selected months', () => {
+  const p = scenario({ recurrence: { kind: 'interval', anchor: '2027-10', end: '2037-10', everyMonths: 12 }, amountChanges: [{ month: '2030-10', amount: 20 }] });
+  assert.equal(p.endMonth, '2027-12');
+  assert.deepEqual(forecast(p).filter(m => m.expense).map(m => [m.month, m.expense]), [['2027-10', 10]]);
+  const original = JSON.stringify(p.items), narrow = changeWindow(p, '2028-01', '2028-06');
+  assert.ok(forecast(narrow).every(m => m.entries.length === 0)); assert.equal(JSON.stringify(narrow.items), original);
+  const later = changeWindow(narrow, '2030-01', '2030-12');
+  assert.deepEqual(forecast(later).filter(m => m.expense).map(m => [m.month, m.expense]), [['2030-10', 20]]);
+  assert.equal(JSON.stringify(later.items), original); assert.equal(JSON.stringify(p.items), original);
+  assert.deepEqual(validatePlan(JSON.parse(JSON.stringify(later))), later);
+});
+test('schedules before/after window, anchored gaps and unknowns do not create phantom flows', () => {
+  const p = scenario({ recurrence: { kind: 'interval', anchor: '2025-10', end: '2035-11', everyMonths: 3 } });
+  assert.deepEqual(forecast(p).filter(m => m.expense).map(m => m.month), ['2027-01', '2027-04', '2027-07', '2027-10']);
+  for (const anchor of ['2020-01', '2040-01']) {
+    const outside = scenario({ amount: null, recurrence: { kind: 'once', anchor, end: anchor, everyMonths: 1 } });
+    assert.ok(forecast(outside).every(m => m.entries.length === 0 && m.missing === 0 && m.expense === 0));
+    assert.equal(outside.items.length, 1);
+  }
+});
+test('estimate editing always selects a real occurrence even entirely outside the window', () => {
+  const p = scenario({ recurrence: { kind: 'interval', anchor: '2027-10', end: '2037-11', everyMonths: 12 } });
+  const item = p.items[0];
+  assert.equal(estimateMonth(item, '2026-11'), '2027-10');
+  assert.equal(estimateMonth(item, '2028-01'), '2028-10');
+  assert.equal(estimateMonth(item, '2040-01'), '2037-10');
+  const next = reviseEstimate(p, item.id, '2030-10', null);
+  assert.equal(plannedAmount(next.items[0], '2030-10'), null);
+  assert.equal(forecast(next).find(m => m.month === '2027-10').expense, 10);
+  assert.throws(() => reviseEstimate(next, item.id, '2030-11', 5));
+  const once = scenario({ recurrence: { kind: 'once', anchor: '2020-01', end: '2020-01', everyMonths: 1 } });
+  assert.equal(estimateMonth(once.items[0], '2026-11'), '2020-01');
+});
+test('independent schedules retain supported date/interval/history and forecast-window bounds', () => {
+  assert.equal(scenario({ recurrence: { kind: 'interval', anchor: '2000-01', end: '2100-12', everyMonths: 1 } }).items.length, 1);
+  for (const [anchor, end] of [['1999-12', '2027-12'], ['2027-01', '2101-01'], ['2030-01', '2027-12']]) assert.throws(() => scenario({ recurrence: { kind: 'interval', anchor, end, everyMonths: 1 } }));
+  const p = scenario(); assert.throws(() => changeWindow(p, '2027-01', '2037-01'));
+  assert.throws(() => scenario({ recurrence: { kind: 'once', anchor: '2030-01', end: '2030-02', everyMonths: 1 } }));
+  const q = reviseEstimate(p, 'one', '2027-01', 20); q.items[0].recurrence.end = '2026-12';
+  assert.throws(() => validatePlan(q)); // Actual schedule edits still cannot orphan estimate history.
 });
 test('stable shared registry, identical names distinct IDs, dangling and duplicate IDs reject', () => {
   const p = scenario(); p.objects.push({ id: 'other', type: 'person', name: p.objects[0].name });

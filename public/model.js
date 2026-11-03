@@ -1,7 +1,7 @@
 // Active v3 monthly planning model: snapshots + plans, never transactions/actuals.
 import * as legacy from './legacy-model.js';
 export { MAX_AMOUNT, MAX_BYTES, MONTHS, monthIndex, monthKey, monthRange, occurs, plannedAmount } from './legacy-model.js';
-import { MAX_AMOUNT, MAX_BYTES, monthRange, monthIndex, occurs, plannedAmount } from './legacy-model.js';
+import { MAX_AMOUNT, MAX_BYTES, monthRange, monthIndex, monthKey, occurs, plannedAmount } from './legacy-model.js';
 const fail = (message = 'Kế hoạch không hợp lệ. Dữ liệu hiện tại được giữ nguyên.') => { throw new Error(message); };
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = (value, max, optional = false) => typeof value === 'string' && value.length <= max && (optional || !!value.trim());
@@ -53,8 +53,8 @@ export function validatePlan(source, { today = todayISO() } = {}) {
     const a = monthIndex(r.anchor), b = monthIndex(r.end);
     if (!['once', 'interval'].includes(r.kind) || b < a || !Number.isInteger(r.everyMonths) || r.everyMonths < 1 || r.everyMonths > 120 ||
         (r.kind === 'once' && (a !== b || r.everyMonths !== 1))) fail('Lịch lặp không hợp lệ.');
-    const last = a + Math.floor((b - a) / r.everyMonths) * r.everyMonths;
-    if (a < monthIndex(p.startMonth) || last > monthIndex(p.endMonth)) fail('Khoảng tháng loại bỏ lần thu chi. Hãy sửa lịch trước.');
+    // Save the full schedule independently of the forecast window. Only
+    // forecast() clips occurrences; changing the view must not discard history.
     if (!Array.isArray(i.amountChanges) || i.amountChanges.length > 120) fail();
     let previous = '';
     for (const c of i.amountChanges) {
@@ -113,6 +113,14 @@ export function forecast(p, includeTentative = false) {
     balance = exact(exact(balance + income) - expense);
     return { month, opening, openingIncomplete, income, expense, net: exact(income - expense), closing: balance, incomplete, missing, incomeMissing, expenseMissing, entries, reset, fresh, references: base.references, missingAccounts: base.missing };
   });
+}
+// Choose a real occurrence for editing even when no occurrence is in the window.
+// Prefer the first at/after the reference; after the schedule, use its final one.
+export function estimateMonth(item, reference) {
+  const r = item.recurrence, first = monthIndex(r.anchor), step = r.everyMonths;
+  const last = r.kind === 'once' ? first : first + Math.floor((monthIndex(r.end) - first) / step) * step;
+  const next = first + Math.ceil(Math.max(0, monthIndex(reference) - first) / step) * step;
+  return monthKey(Math.min(next, last));
 }
 export function changeWindow(p, startMonth, endMonth) { return validatePlan({ ...p, startMonth, endMonth }); }
 export function reviseEstimate(p, id, month, value) {

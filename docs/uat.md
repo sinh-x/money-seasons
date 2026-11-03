@@ -6,11 +6,11 @@ Record candidate commit, environment, date, expected/observed results and Sinh's
 
 | TS / AC | Synthetic task and expected result | Human status |
 |---|---|---|
-| 1 | Count default14 months, Nov2026–Dec2027; cross Dec–Jan; try1/120 months and invalid/orphaning windows. Preserve valid data and original years. | Not run |
+| 1 | Count default14 months, Nov2026–Dec2027; cross Dec–Jan; try1/120 months and invalid windows. Shorten/move the window: keep every full schedule/history record and include only overlapping occurrences. Preserve valid data and original years. | Not run |
 | 2 | Create Person/Group/Category; one expense and income share an object. Rename across tabs/reload. Duplicate names stay distinct; referenced deletion blocked. | Not run |
 | 3 | Save named expense/details/schedule with blank amount; reload unknown; change to0. Cancel and confirm deletion; preserve shared object/unrelated income. No actual field. | Not run |
 | 4 | Empty/expense-only objects hidden in Income, all in Add picker. Unknown/0/tentative/out-of-summary-month income reveals its object; deleting last income hides only that card. | Not run |
-| 5 | Once/monthly/N2/yearly anchoredNovember occurrences; rejectN0/fraction/121. January estimate change preserves prior values and later points; cancel/same-point confirmation; extending window does not extend routines. | Not run |
+| 5 | Once/monthly/N2/yearly anchoredNovember occurrences; rejectN0/fraction/121. January estimate change preserves prior values and later points; cancel/same-point confirmation; save a full yearly schedule beyond the window (including a schedule longer than120 months), edit past/future entries outside it, and move/shrink/expand the forecast without dropping/re-anchoring schedules or history. Extending a window does not extend routines. | Not run |
 | 6 | In plans/cash/debt try5→5000,500→500000,5000/5M/5tr→5000000,5trăm→500000,5ngàn→5000; preview and literal-VND roundtrip. Reject malformed/mixed/negative/exponent/fractional/overflow; blank differs from0. | Not run |
 | 7 | Cash snapshots: newest applicable reference date wins, later-entered history doesn't replace a newer date; December never used for November. Invalid/future reject; same-day correction confirms; missing balance unknown. | Not run |
 | 8 | VND: NovA3000+B7000−2000→8000; Dec onlyB6000 refresh: staleA3000+B6000−full2000→7000; Jan no refresh→5000. Verify dates/reset/carry/unknown/tentative behavior. | Not run |

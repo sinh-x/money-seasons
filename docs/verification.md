@@ -44,6 +44,14 @@ Node logs are ephemeral `/tmp/ms001-final-{model,server,deployment,all}.log`; fi
 
 Inspected actual Chrome screenshots of desktop calendar, mobile expense objects/details and mobile month detail. Observed year-visible chronological columns, separately grouped flows and explicit unknown labels, contained scrolling, readable parsed/maximum values, stacked narrow-screen controls/cards and labeled native month dialog. This is agent observation of synthetic data, **not Sinh's UAT** or an accessibility certification.
 
+## Confirmed follow-up: schedules independent of forecast windows
+
+Sinh confirmed: save the full income/expense schedule independently, forecast only overlapping months, and do not automatically extend the forecast. This supersedes only the old window-exclusion rejection; supported dates, history validation, arithmetic and data preservation remain. Active v3 schema is unchanged; no plan migration is needed. Saved schedules may span more than120 months within2000–2100, while each forecast remains1–120 months.
+
+Local syntax and **69/69 Node tests** passed, zero failures/skips/cancellations/todo. Browser: **17 groups/66 axe scans**, zero detected violations/page errors/external requests. New synthetic model/API/browser checks cover a long yearly schedule, schedules entirely before/after the forecast, anchored gaps, ignored out-of-window unknowns, out-of-window estimate editing, persisted/exported future history, and shrinking/moving/expanding the window without altering saved entries. Existing populated-store restart coverage now includes a schedule and change point beyond the window. Browser artifacts: `/tmp/ms-001-browser.F3bjqx/`; Node log: `/tmp/ms001-independent-schedule-tests.log` (ephemeral, synthetic only).
+
+The behavior was checked on an owned temporary fixture, not by changing household data. This section records source/test completion; applying it to the local stack is a separate restart/update action. Human UAT and native workflow promotion remain unclaimed.
+
 ## Separately authorized local-stack follow-up
 
 After the four-phase implementation, Sinh requested updating the local stack. The app was rebuilt, the local web service recreated, and the pre-existing Caddy health failure resolved with bounded `GOMAXPROCS=2`, retaining the64-PID cap. Both services are healthy. CA-verified HTTPS serves0.3.0; all six deployed HTML/JS/CSS assets match the checkout; unauthenticated finance/session requests return401/no-store. All64 Node tests passed after the config adjustment. The old3080 container ID/image/start time remained unchanged. No login/finance read/migration or host trust/private-network changes were performed. See [current update evidence](local-stack.md#current-v3-update-2026-11-03-explicitly-requested).

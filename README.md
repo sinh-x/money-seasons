@@ -31,7 +31,7 @@ All stored amounts are exact integer VND, at most 1 trillion per field. Blank pl
 
 Bare numbers mean thousands. One/two decimal digits are accepted; consistent three-digit comma/dot groups are grouping, **not three decimal places**. Mixed separators, negatives, exponents, unknown units, fractional VND and overflow reject without rounding. Every amount editor shows a parsed preview. Reopened stored amounts include `VND` to avoid accidental rescaling.
 
-- Schedules: once, monthly, every N months (1–120), yearly. Anchors and inclusive ends are explicit; extending the window never extends a routine.
+- Schedules: once, monthly, every N months (1–120), yearly. **Save the full schedule independently of the forecast window**, including dates before/after it within 2000–2100. Only overlapping occurrences affect the displayed forecast. The forecast remains 1–120 months; a routine can span longer. Changing the window never truncates/deletes/re-anchors/extends a routine or its estimate history. Out-of-window entries remain editable in Income/Expenses.
 - Estimate edits preview/confirm the effective occurrence month. Earlier values remain; later change points still apply. Replacing a same-month point is explicit. Schedule changes cannot orphan saved estimate history.
 - Tentative amounts are excluded unless the reversible comparison switch is enabled. There are **no active item-level actuals, payments or transactions**.
 - At the first month and any month containing a cash snapshot, opening cash resets to the sum of each account's latest applicable dated balance. Other accounts may have older dates; those dates are shown. Otherwise the previous closing estimate carries forward, including across January.

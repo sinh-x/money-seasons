@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { testApp } from '../scripts/fixture-support.mjs';
-import { blankPlan, convertLegacy } from '../public/model.js';
+import { blankPlan, convertLegacy, forecast } from '../public/model.js';
 import { demoPlan as legacyDemo } from '../public/legacy-model.js';
 import { writeFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
@@ -79,6 +79,21 @@ test('legacy API exports original actuals, rejects silent conversion and archive
   assert.equal((await save(false)).status, 400);
   assert.equal((await save(true)).status, 200);
   assert.ok((await readdir(path.join(isolated.directory, 'data'))).some(n => n.startsWith('original-')));
+});
+
+test('API saves/exports full out-of-window schedules and history across window changes', async t => {
+  const isolated = await testApp(); t.after(() => isolated.close()); const headers = await isolated.login();
+  const p = blankPlan(); p.objects = [{ id: 'family', name: 'Synthetic', type: 'group' }];
+  p.items = [{ id: 'annual', objectId: 'family', name: 'Synthetic long schedule', description: '', type: 'expense', status: 'confirmed', amount: 10,
+    recurrence: { kind: 'interval', anchor: '2027-10', end: '2037-10', everyMonths: 12 }, amountChanges: [{ month: '2030-10', amount: 20 }] }];
+  const save = (plan, revision) => fetch(isolated.base + '/api/plan', { method: 'PUT', headers, body: JSON.stringify({ plan, expectedRevision: revision, operation: 'replace', confirmed: true }) });
+  let response = await save(p, 0); assert.equal(response.status, 200); let state = await response.json();
+  assert.deepEqual(state.plan, p); assert.equal(forecast(state.plan).reduce((n, m) => n + m.expense, 0), 10);
+  response = await save({ ...p, startMonth: '2028-01', endMonth: '2028-06' }, state.revision); assert.equal(response.status, 200); state = await response.json();
+  assert.deepEqual(state.plan.items, p.items); assert.equal(forecast(state.plan).reduce((n, m) => n + m.expense, 0), 0);
+  response = await save({ ...state.plan, startMonth: '2030-01', endMonth: '2030-12' }, state.revision); assert.equal(response.status, 200); state = await response.json();
+  assert.deepEqual(state.plan.items, p.items); assert.equal(forecast(state.plan).reduce((n, m) => n + m.expense, 0), 20);
+  const exported = await (await fetch(isolated.base + '/api/export', { headers })).json(); assert.deepEqual(exported, state.plan);
 });
 
 test('lost acknowledgement reconciles via reread; failed save never responds success', async t => {

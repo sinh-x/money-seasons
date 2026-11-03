@@ -64,7 +64,7 @@ test('populated active objects, estimates, cash/debt history survive restart byt
   const { store, dir } = await fixture(t), p = blankPlan('2025-11', '2026-01');
   p.objects = [{ id: 'group', name: 'Synthetic family', type: 'group' }];
   p.items = [{ id: 'plan', objectId: 'group', name: 'Synthetic', description: '', type: 'expense', status: 'confirmed', amount: null,
-    recurrence: { kind: 'interval', anchor: p.startMonth, end: p.endMonth, everyMonths: 1 }, amountChanges: [{ month: '2025-12', amount: 0 }] }];
+    recurrence: { kind: 'interval', anchor: p.startMonth, end: '2037-12', everyMonths: 1 }, amountChanges: [{ month: '2025-12', amount: 0 }, { month: '2030-01', amount: 5 }] }];
   p.accounts = [{ id: 'cash', name: 'Cash' }];
   p.snapshots = [{ id: 'snap1', accountId: 'cash', date: '2025-11-01', amount: 3000 }, { id: 'snap2', accountId: 'cash', date: '2025-12-01', amount: 4000 }];
   p.debtAccounts = [{ id: 'debt', name: 'Debt', direction: 'payable' }];
