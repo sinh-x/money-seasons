@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { blankPlan, validatePlan, forecast, latestSnapshot, debtTotal, setSnapshot, todayISO, validDate } from '../public/model.js';
+import { blankPlan, validatePlan, forecast, latestSnapshot, debtTotal, setSnapshot, todayISO, validDate, MAX_AMOUNT } from '../public/model.js';
+import { debtFixture, DEBT_EXPECTED } from '../scripts/debt-fixture.mjs';
 const fixture = () => ({ ...blankPlan('2025-11', '2026-01'), objects: [{ id: 'group', name: 'Synthetic', type: 'group' }],
   accounts: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }], snapshots: [
     { id: 'a-nov', accountId: 'a', date: '2025-11-01', amount: 3000 },
@@ -34,6 +35,60 @@ test('debt directions separate from cash; repayment and collection ordinary plan
   p.items.push({ ...p.items[0], id: 'repay', amount: 1000 }, { ...p.items[0], id: 'collect', type: 'income', amount: 400 });
   assert.equal(forecast(validatePlan(p))[0].closing, 7400);
   assert.equal(debtTotal(p, 'payable', '2026-01').known, 9000);
+});
+test('debt totals use one latest dated balance per account, never sum history or net directions', () => {
+  const p = validatePlan(debtFixture()), original = JSON.stringify(p);
+  for (const row of DEBT_EXPECTED) for (const direction of ['payable', 'receivable']) assert.deepEqual(debtTotal(p, direction, row.month), row[direction], `${row.month} ${direction}`);
+  assert.deepEqual(debtTotal(p, 'payable', '2025-10'), { known: 10000, missing: 2 });
+  assert.equal(latestSnapshot(p.debtSnapshots, 'pay-a', '2025-11').date, '2025-11-20');
+  assert.equal(latestSnapshot(p.debtSnapshots, 'pay-b', '2025-12').amount, 0);
+  assert.equal(JSON.stringify(p), original);
+  p.debtSnapshots.reverse();
+  for (const row of DEBT_EXPECTED) assert.deepEqual(debtTotal(p, 'payable', row.month), row.payable);
+});
+test('debt corrections retain IDs and replace once; missing/zero/equal names remain distinct', () => {
+  const p = validatePlan(debtFixture()); p.debtAccounts[1].name = p.debtAccounts[0].name;
+  assert.deepEqual(debtTotal(validatePlan(p), 'payable', '2025-11'), { known: 12000, missing: 1 });
+  const correction = { id: 'replacement', accountId: 'pay-a', date: '2025-11-20', amount: 0 };
+  assert.throws(() => setSnapshot(p, correction, { debt: true }));
+  const next = setSnapshot(p, correction, { debt: true, confirmed: true });
+  assert.equal(next.debtSnapshots.find(s => s.date === correction.date).id, 'pa-nov-latest');
+  assert.deepEqual(debtTotal(next, 'payable', '2025-11'), { known: 4000, missing: 1 });
+  assert.deepEqual(debtTotal(next, 'payable', '2025-12'), { known: 7000, missing: 1 });
+  assert.deepEqual(debtTotal(next, 'receivable', '2025-12'), { known: 3500, missing: 0 });
+  assert.deepEqual(debtTotal(blankPlan(), 'payable', '2025-11'), { known: 0, missing: 0 });
+  const noMissing = structuredClone(next); noMissing.debtAccounts = noMissing.debtAccounts.filter(a => a.id !== 'pay-unknown');
+  assert.deepEqual(debtTotal(validatePlan(noMissing), 'payable', '2025-12'), { known: 7000, missing: 0 });
+  assert.deepEqual(forecast(next), forecast(p)); // Debt balance edits alone never change cash.
+});
+test('invalid debt snapshots are rejected before totals: dates, duplicate days, amounts and links', () => {
+  for (const change of [{ date: '2100-01-01' }, { date: '2025-02-29' }, { amount: null }, { amount: -1 }, { amount: 0.5 }, { amount: MAX_AMOUNT + 1 }, { accountId: 'missing' }]) {
+    const p = debtFixture(); Object.assign(p.debtSnapshots[0], change); assert.throws(() => validatePlan(p), JSON.stringify(change));
+  }
+  const duplicate = debtFixture(); duplicate.debtSnapshots.push({ ...duplicate.debtSnapshots[0], id: 'duplicate-day' }); assert.throws(() => validatePlan(duplicate));
+});
+test('maximum supported debt-account totals stay exact and separated', () => {
+  const p = blankPlan('2025-11', '2025-11');
+  p.debtAccounts = Array.from({ length: 500 }, (_, n) => ({ id: `debt-${n}`, name: 'Synthetic maximum', direction: n % 2 ? 'payable' : 'receivable' }));
+  p.debtSnapshots = p.debtAccounts.map((a, n) => ({ id: `snapshot-${n}`, accountId: a.id, date: '2025-11-01', amount: MAX_AMOUNT }));
+  const valid = validatePlan(p);
+  for (const direction of ['payable', 'receivable']) assert.deepEqual(debtTotal(valid, direction, '2025-11'), { known: Number(250n * BigInt(MAX_AMOUNT)), missing: 0 });
+});
+test('debt totals match an independent sorted-history ledger across a synthetic year', () => {
+  const p = blankPlan('2025-01', '2025-12');
+  p.debtAccounts = Array.from({ length: 30 }, (_, n) => ({ id: `a-${n}`, name: 'Synthetic reference', direction: n % 2 ? 'payable' : 'receivable' }));
+  p.debtSnapshots = p.debtAccounts.flatMap((a, n) => n % 5 === 0 ? [] : Array.from({ length: 6 }, (_, m) => ({ id: `s-${n}-${m}`, accountId: a.id, date: `2025-${String(m + 1).padStart(2, '0')}-15`, amount: ((n + 3) * (m + 11) * 997) % 1000000 })));
+  p.debtSnapshots.reverse(); const valid = validatePlan(p);
+  for (let m = 1; m <= 12; m++) {
+    const month = `2025-${String(m).padStart(2, '0')}`, latest = new Map();
+    // Independent reference: process ascending dated history once, then sum by direction.
+    for (const s of [...p.debtSnapshots].sort((a, b) => a.date.localeCompare(b.date))) if (s.date <= `${month}-31`) latest.set(s.accountId, BigInt(s.amount));
+    for (const direction of ['payable', 'receivable']) {
+      let known = 0n, missing = 0;
+      for (const a of p.debtAccounts.filter(a => a.direction === direction)) { if (latest.has(a.id)) known += latest.get(a.id); else missing++; }
+      assert.deepEqual(debtTotal(valid, direction, month), { known: Number(known), missing });
+    }
+  }
 });
 test('today uses Vietnam zone; leap dates, future dates, duplicate snapshots and references validate', () => {
   assert.equal(todayISO(new Date('2026-11-03T18:00:00Z')), '2026-11-04');

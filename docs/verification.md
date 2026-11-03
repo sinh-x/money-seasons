@@ -44,6 +44,16 @@ Node logs are ephemeral `/tmp/ms001-final-{model,server,deployment,all}.log`; fi
 
 Inspected actual Chrome screenshots of desktop calendar, mobile expense objects/details and mobile month detail. Observed year-visible chronological columns, separately grouped flows and explicit unknown labels, contained scrolling, readable parsed/maximum values, stacked narrow-screen controls/cards and labeled native month dialog. This is agent observation of synthetic data, **not Sinh's UAT** or an accessibility certification.
 
+## Focused debt-total verification
+
+Sinh requested checking debt totals. Read-only source review plus synthetic regressions found **no arithmetic defect in the exercised cases**; no production model/UI change was needed. This does not verify household inputs or constitute human UAT.
+
+The model and rendered Debt summary both use the latest reference-dated snapshot **applicable to the selected month**, once per account; history is not summed. Payable/receivable directions remain separate, missing balances are counted as unknown, and explicit0 is known0. A later-entered historical record cannot override a newer applicable date; a later-month balance cannot flow backward. Same-day corrections replace once and preserve the snapshot ID. Planned repayments/collections remain ordinary cash plans and do not automatically reduce debt balances.
+
+Shared fixture `scripts/debt-fixture.mjs` contains only synthetic accounts/dates/VND. Independently worked results: November payable8000+4000=12000 plus one unknown; receivable2500 plus one unknown. December payable7000+0=7000 plus one unknown; receivable2000+1500=3500. January without updates keeps those debt references (not cash-flow subtraction). Browser verified all summary/card figures, monthly switching without saves, and same-day historical correction without a cash change. Also checked reordered/backfilled history, duplicate-looking names with distinct IDs, missing versus0, invalid debt dates/amounts/links/duplicate days, maximum500 accounts with exact totals, and a separate sorted-history reference across a synthetic year.
+
+Syntax/diff checks and **74/74 Node tests** passed, including10 focused accounts/debts tests. Isolated browser: **19 groups/97 axe scans**, zero detected violations/page errors/external requests. Inspected the synthetic Debt totals screenshot. Ephemeral artifacts: `/tmp/ms-001-browser.yYVAsn/`; Node log `/tmp/ms001-debt-total-tests.log`. Tests use their owned temporary server/store/profile only. No existing plan/passphrase was read, no live service updated or real debt changed; this is regression coverage/documentation only, so no local-stack rebuild is required.
+
 ## Confirmed follow-up: collapse overall/detail views
 
 Sinh selected all four requested locations: Income/Expense object cards, calendar object groups, whole calendar income/expense sections and cash/debt history. Implemented page-local view controls plus workspace-scoped collapse-all/expand-all, keeping names/counts/monthly totals and account/section balances visible. Nested group state survives a parent section toggle. Native keyboard buttons expose expanded/control relationships; focus and contained table scroll positions survive rerenders. A full reload resets disclosure choices; no schema, financial export, save or calculation change.

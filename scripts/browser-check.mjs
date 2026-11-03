@@ -10,6 +10,7 @@ import os from 'node:os';
 import { PASSPHRASE } from './fixture-support.mjs';
 import { blankPlan, forecast, validatePlan } from '../public/model.js';
 import { demoPlan as legacyDemo } from '../public/legacy-model.js';
+import { debtFixture } from './debt-fixture.mjs';
 if (process.env.BASE_URL) throw new Error('Refusing BASE_URL: browser checks own an isolated synthetic child server.');
 const artifacts = process.env.BROWSER_ARTIFACTS || await mkdtemp(path.join(os.tmpdir(), 'ms-001-browser-'));
 if (!path.resolve(artifacts).startsWith(os.tmpdir() + path.sep)) throw new Error('Artifacts must be outside Git in a temporary directory.');
@@ -196,6 +197,32 @@ try {
     await page.locator('[data-action=account]:not([data-id])').click(); await page.locator('[name=name]').fill('Synthetic receivable'); await page.locator('[name=direction]').selectOption('receivable'); await submit(page);
     await page.locator('[data-action=debt-plan]').last().click(); await page.locator('[name=amount]').fill('400 VND'); await page.locator('[name=start]').fill('2025-12'); await submit(page);
     assert.equal(forecast((await snapshot(page)).plan)[1].closing, 6400);
+  });
+  await check('debt display matches independently worked multi-account totals by selected month', async () => {
+    const original = (await snapshot(page)).plan, fixture = validatePlan(debtFixture());
+    await importPlan(page, fixture); await nav(page, 'debts');
+    const before = await snapshot(page), cashBefore = forecast(before.plan);
+    const expected = [
+      ['2025-11', '12.000 ₫ + ? (chưa biết)', '2.500 ₫ + ? (chưa biết)', ['8.000 ₫', '4.000 ₫', 'Chưa biết', '2.500 ₫', 'Chưa biết']],
+      ['2025-12', '7.000 ₫ + ? (chưa biết)', '3.500 ₫', ['7.000 ₫', '0 ₫', 'Chưa biết', '2.000 ₫', '1.500 ₫']],
+      ['2026-01', '7.000 ₫ + ? (chưa biết)', '3.500 ₫', ['7.000 ₫', '0 ₫', 'Chưa biết', '2.000 ₫', '1.500 ₫']]
+    ];
+    for (const [month, payable, receivable, accounts] of expected) {
+      await page.locator('#view-month').selectOption(month);
+      assert.deepEqual((await page.locator('.summary-grid .stat-value').allTextContents()).slice(0, 2), [payable, receivable]);
+      assert.deepEqual(await page.locator('.account-card .account-balance').allTextContents(), accounts);
+    }
+    assert.deepEqual(await snapshot(page), before); // Merely viewing a month is not a save.
+    await page.locator('#view-month').selectOption('2025-12'); await axe(page, 'debt-worked-totals');
+    await page.evaluate(() => scrollTo(0, 0)); await page.screenshot({ path: path.join(artifacts, 'debt-worked-totals.png'), fullPage: true });
+    await page.locator('.history-table [data-action=snapshot][data-date="2025-11-20"]').click();
+    await page.locator('[name=amount]').fill('0'); await submit(page, true);
+    assert.equal(await page.locator('.summary-grid .stat-value').first().textContent(), '7.000 ₫ + ? (chưa biết)');
+    await page.locator('#view-month').selectOption('2025-11');
+    assert.equal(await page.locator('.summary-grid .stat-value').first().textContent(), '4.000 ₫ + ? (chưa biết)');
+    const corrected = await snapshot(page); assert.equal(corrected.plan.debtSnapshots.length, fixture.debtSnapshots.length);
+    assert.deepEqual(forecast(corrected.plan), cashBefore);
+    await importPlan(page, original);
   });
   await check('lossless versioned exports and invalid/cancelled import preserves state', async () => {
     const state = await snapshot(page), downloadEvent = page.waitForEvent('download'); await page.locator('#export-button').click();

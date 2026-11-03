@@ -12,7 +12,7 @@ MS-001's four implementation phases are now committed on its feature branch foll
 - **Rõ chi:** create/select a Person, Group or Category, then add purpose, details and schedule. Enter the amount later.
 - **Đa thu:** same shared objects, but only objects with income details appear. Unknown/zero/tentative or out-of-month income still qualifies. All objects remain available in Add Income.
 - **Tài khoản:** named cash accounts with dated balance snapshots. History is retained; only the latest applicable reference date contributes.
-- **Công nợ:** separate payable/receivable accounts and dated balances. Manual repayment plans are expenses; collection plans are income. Planning never automatically changes debt balances.
+- **Công nợ:** separate payable/receivable accounts and dated balances. Totals use each account's latest reference date applicable to **Tháng xem**, not the sum of its history or necessarily the globally newest balance. Missing balances stay unknown; explicit zero is valid. Manual repayment plans are expenses; collection plans are income. Planning never automatically changes debt balances.
 
 Types differ only by labeled icons, not permissions/calculations. Shared renames apply across income/expenses. Equal-looking names have distinct IDs; there is no implicit merge. Referenced objects cannot be deleted until details are explicitly moved or removed. Account histories cannot be silently deleted.
 
