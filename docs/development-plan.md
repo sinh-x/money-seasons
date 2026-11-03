@@ -2,7 +2,7 @@
 
 ## MS-001: four-phase implementation candidate
 
-Sinh's current request explicitly resumes implementation in the selected rogue-one checkout and requests **one commit per planned phase**. The previous intake pause is historical, not a current stop instruction for this request. Use r002's revised requirements/UAT draft and v003 mockup, not r001's superseded actual-entry/opening-cash behavior. Canonical PA package/workflow promotion and human acceptance remain separate; historical artifacts are unchanged.
+Sinh's current request explicitly resumes implementation in the selected rogue-one checkout and requests **one commit per planned phase**. The previous intake pause is historical, not a current stop instruction for this request. Use r002's revised requirements/UAT draft and v003 mockup, not r001's superseded actual-entry/opening-cash behavior. Canonical PA package/workflow promotion and human acceptance remain separate; historical artifacts are unchanged. Sinh subsequently explicitly requested wrap-up and a local merge into `develop`; see the [integration handoff](ms-001-wrap-up.md). This authorizes local integration without claiming those separate gates complete.
 
 | Phase | Depends on | Delivered scope | Verification |
 |---|---|---|---|
@@ -31,9 +31,9 @@ No transaction ledger, paid/received tracking, automatic interest/amortization/d
 ## Review and rollout still needed
 
 1. Independent exact-FeatureSHA review and supported native workflow/source continuation through its existing owner. This explicit rogue-one implementation does not publish/promote the pending r002 draft or resolve the old publication blocker.
-2. Operator separately qualifies private filesystem, image/runtime, HTTPS/Tailscale ACLs and allowed/unauthorized devices with synthetic data. No live rebuild/restart occurred for this revision.
+2. Operator separately qualifies production private filesystem/image/runtime, HTTPS/Tailscale ACLs and allowed/unauthorized devices. The localhost synthetic stack has been separately rebuilt/verified as recorded in [local-stack.md](local-stack.md); this does not qualify real-family production access. Its recurring Caddy probe issue remains unresolved.
 3. Sinh executes/records all [16 human UAT scenarios](uat.md); automated checks do not accept requirements.
 4. Separately authorize real-data migration, preserve originals and review legacy mapping/actual exclusion/new dated balances privately.
-5. Only then integrate/release using [Git Flow](branching.md). No merge/push/checkout return is inferred from local phase commits.
+5. The latest explicit wrap-up request authorizes a local no-fast-forward feature merge into `develop`, preserving phase history. Release/production rollout still requires the remaining gates; push, release tags, `main` integration and checkout return are not included. Follow [Git Flow](branching.md) for subsequent release work.
 
 Historical MS-D01/D05/D06/D07/D09 are reconciled in [tickets.md](tickets.md), not duplicated into a new backlog. Previous intake is archived in [requirements-follow-up.md](requirements-follow-up.md).

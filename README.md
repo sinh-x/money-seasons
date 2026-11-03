@@ -6,6 +6,8 @@ Vietnamese/whole-VND monthly planning for one family. Default **November 2026–
 
 MS-001's four implementation phases are now committed on its feature branch following Sinh's explicit request to resume and commit each phase. The basis is the r002 requirements/UAT draft and v003 five-workspace mockup. This is an implementation candidate, **not independent workflow approval, human UAT or production deployment**. Historical review artifacts and the workflow publication blocker are not rewritten. See [implementation details](docs/ms-001.md), [development plan](docs/development-plan.md) and [UAT checklist](docs/uat.md).
 
+The [MS-001 wrap-up handoff](docs/ms-001-wrap-up.md) records the explicit local `develop` integration request, fresh checks and remaining operational/UAT limits. Local integration does not push code, restart services or migrate financial data.
+
 ## Five workspaces
 
 - **Lịch tài chính:** chronological monthly columns, separate income/expense groups, account reference dates, opening/closing totals; month cards/detail on narrow screens.
