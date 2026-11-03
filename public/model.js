@@ -106,10 +106,12 @@ export function forecast(p, includeTentative = false) {
     const active = entries.filter(i => i.included), missing = active.filter(i => i.effective === null).length;
     const sum = type => active.filter(i => i.type === type).reduce((n, i) => exact(n + (i.effective ?? 0)), 0);
     const income = sum('income'), expense = sum('expense');
+    const incomeMissing = active.filter(i => i.type === 'income' && i.effective === null).length;
+    const expenseMissing = active.filter(i => i.type === 'expense' && i.effective === null).length;
     totalIncome = exact(totalIncome + income); totalExpense = exact(totalExpense + expense);
     incomplete ||= missing > 0;
     balance = exact(exact(balance + income) - expense);
-    return { month, opening, openingIncomplete, income, expense, net: exact(income - expense), closing: balance, incomplete, missing, entries, reset, fresh, references: base.references, missingAccounts: base.missing };
+    return { month, opening, openingIncomplete, income, expense, net: exact(income - expense), closing: balance, incomplete, missing, incomeMissing, expenseMissing, entries, reset, fresh, references: base.references, missingAccounts: base.missing };
   });
 }
 export function changeWindow(p, startMonth, endMonth) { return validatePlan({ ...p, startMonth, endMonth }); }

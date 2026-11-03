@@ -4,7 +4,7 @@ import AxeBuilder from '@axe-core/playwright';
 import assert from 'node:assert/strict';
 import { fork } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { PASSPHRASE } from './fixture-support.mjs';
@@ -17,11 +17,13 @@ await mkdir(artifacts, { recursive: true, mode: 0o700 });
 console.log(`Synthetic browser artifacts: ${artifacts}`);
 const child = fork(new URL('./browser-server.mjs', import.meta.url), [], { stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
 let browser, base, page;
-const results = [], errors = [], external = [], scans = [];
+const results = [], errors = [], external = [], scans = [], responseLedger = [], failedRequests = [];
 const timeout = setTimeout(() => { child.kill('SIGTERM'); process.exitCode = 1; }, 360000);
 const check = async (name, action) => { await action(); results.push(name); console.log(`PASS ${name}`); };
 function watch(p) {
   p.on('pageerror', e => errors.push(e.message));
+  p.on('response', r => { if (r.status() >= 400) responseLedger.push({ path: new URL(r.url()).pathname, status: r.status() }); });
+  p.on('requestfailed', r => failedRequests.push({ path: new URL(r.url()).pathname, error: r.failure().errorText }));
   p.on('request', r => { if (!r.url().startsWith(base + '/') && !r.url().startsWith('blob:')) external.push(r.url()); });
 }
 const visible = (p, selector) => p.locator(selector).waitFor({ state: 'visible' });
@@ -101,6 +103,7 @@ try {
   await check('amount-later expense, zero distinct, Income visibility including tentative out-of-month', async () => {
     await nav(page, 'expense'); await item(page); await axe(page, 'planned-entry'); await submit(page);
     assert.equal((await snapshot(page)).plan.items[0].amount, null);
+    await nav(page, 'calendar'); assert.ok((await page.locator('.stat-value').nth(2).textContent()).includes('chưa biết'));
     await nav(page, 'income'); assert.equal(await page.locator('.object-card').count(), 0);
     const f = await item(page, { kind: 'income', name: 'Future tentative', amount: '', start: '2027-03', end: '2027-03', repeat: 'once', status: 'tentative' });
     assert.equal(await f.locator('[name=objectId] option').count(), 3); await submit(page);
@@ -168,6 +171,7 @@ try {
   await check('lossless versioned exports and invalid/cancelled import preserves state', async () => {
     const state = await snapshot(page), downloadEvent = page.waitForEvent('download'); await page.locator('#export-button').click();
     const file = await downloadEvent; await file.saveAs(path.join(artifacts, 'synthetic-export.json'));
+    assert.deepEqual(JSON.parse(await readFile(path.join(artifacts, 'synthetic-export.json'), 'utf8')), state.plan);
     const exported = await page.evaluate(async () => (await fetch('/api/export')).json()); assert.deepEqual(exported, state.plan);
     await page.locator('#import-file').setInputFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('{broken') }); await visible(page, '#toast'); assert.deepEqual(await snapshot(page), state);
     await page.locator('#import-file').setInputFiles({ name: 'cancel.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(blankPlan())) }); await cancelConfirm(page); assert.deepEqual(await snapshot(page), state);
@@ -179,6 +183,7 @@ try {
     await visible(page, '#editor'); assert.ok((await page.locator('#editor').textContent()).includes('KHÔNG tham gia dự báo mới'));
     assert.equal(await page.locator('[name=ack]').isDisabled(), true); const before = await snapshot(page);
     const event = page.waitForEvent('download'); await page.locator('[data-action=download-original]').click(); await (await event).saveAs(path.join(artifacts, 'synthetic-original-v2.json'));
+    assert.deepEqual(JSON.parse(await readFile(path.join(artifacts, 'synthetic-original-v2.json'), 'utf8')), old);
     await page.locator('[name=ack]').check(); await submit(page, true);
     const state = await snapshot(page); assert.equal(state.plan.startMonth, '2027-01'); assert.equal(state.plan.items[0].id, old.items[0].id); assert.equal('actuals' in state.plan.items[0], false); assert.equal(state.plan.snapshots.length, 0); assert.ok(state.revision > before.revision);
   });
@@ -207,6 +212,13 @@ try {
     const before = (await snapshot(page)).revision; await page.locator('#retry-button').click(); await saved(page, before);
   });
   await check('all five workspaces and dialogs at five widths: overflow, axe, keyboard, screenshots', async () => {
+    const populated = (await snapshot(page)).plan;
+    populated.items.push({ ...structuredClone(populated.items[0]), id: 'layout-unknown', type: 'income', name: 'Synthetic unknown', amount: null, amountChanges: [] });
+    populated.accounts = [{ id: 'layout-cash', name: 'Synthetic cash '.repeat(5).trim() }];
+    populated.snapshots = [{ id: 'layout-cash-snap', accountId: 'layout-cash', date: '2025-11-01', amount: 1000000000000 }];
+    populated.debtAccounts = [{ id: 'layout-debt', name: 'Synthetic debt '.repeat(5).trim(), direction: 'payable' }];
+    populated.debtSnapshots = [{ id: 'layout-debt-snap', accountId: 'layout-debt', date: '2025-11-01', amount: 1000000000000 }];
+    await importPlan(page, populated);
     for (const width of [320, 360, 390, 768, 1440]) {
       await page.setViewportSize({ width, height: 1000 });
       for (const name of ['calendar', 'expense', 'income', 'accounts', 'debts']) { await nav(page, name); await overflow(page); await axe(page, `${name}-${width}`); }
@@ -214,6 +226,9 @@ try {
       assert.equal(await page.locator('[data-action=object]:not([data-id])').evaluate(e => e === document.activeElement), true);
       await item(page, { name: 'Not saved keyboard', amount: '5' }); await overflow(page); await axe(page, `plan-${width}`); await page.keyboard.press('Escape');
       await nav(page, 'accounts'); await page.locator('[data-action=account]:not([data-id])').click(); await overflow(page); await axe(page, `account-${width}`); await close(page);
+      await page.locator('[data-action=snapshot]').first().click(); await overflow(page); await axe(page, `cash-snapshot-${width}`); await close(page);
+      await nav(page, 'debts'); await page.locator('[data-action=account]:not([data-id])').click(); await overflow(page); await axe(page, `debt-account-${width}`); await close(page);
+      await page.locator('[data-action=snapshot]').first().click(); await overflow(page); await axe(page, `debt-snapshot-${width}`); await close(page);
     }
     await page.setViewportSize({ width: 1440, height: 1000 }); await nav(page, 'calendar'); await page.locator('[data-action=table]').click(); await page.screenshot({ path: path.join(artifacts, 'desktop-calendar.png'), fullPage: true });
     await page.setViewportSize({ width: 390, height: 1000 }); await page.locator('[data-action=cards]').click(); await page.screenshot({ path: path.join(artifacts, 'mobile-calendar.png'), fullPage: true });
@@ -226,8 +241,11 @@ try {
     assert.equal(await p.locator('[name=actual], [data-actual]').count(), 0);
     await p.locator('#logout-button').click(); await confirm(p); await visible(p, '#login-form'); assert.equal(await p.evaluate(async () => (await fetch('/api/plan')).status), 401); await fresh.close();
     assert.deepEqual(errors, []); assert.deepEqual(external, []);
+    const allowed = { '/api/session': [401], '/api/login': [401], '/api/plan': [401, 409, 503] };
+    assert.deepEqual(responseLedger.filter(r => !allowed[r.path]?.includes(r.status)), []);
+    assert.deepEqual(failedRequests.filter(r => r.path !== '/api/plan' || !r.error.includes('ERR_FAILED')), []);
   });
-  await writeFile(path.join(artifacts, 'report.json'), JSON.stringify({ groups: results, scans, errors, external, browser: browser.version(), humanUAT: 'Not run', productionDeployment: 'Not performed' }, null, 2));
+  await writeFile(path.join(artifacts, 'report.json'), JSON.stringify({ groups: results, scans, errors, external, responseLedger, failedRequests, browser: browser.version(), humanUAT: 'Not run', productionDeployment: 'Not performed' }, null, 2));
   console.log(`${results.length} groups; ${scans.length} axe scans; no detected violations, page errors or external requests. Human UAT not run.`);
 } catch (error) {
   if (page) await page.screenshot({ path: path.join(artifacts, 'failure.png'), fullPage: true }).catch(() => {});

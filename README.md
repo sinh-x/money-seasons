@@ -1,12 +1,42 @@
 # Money Seasons
 
-**Lịch tài chính gia đình · Biết trước những tháng cần nhiều tiền.**
+**Lịch tài chính gia đình · Cùng hiểu, cùng lên kế hoạch.**
 
-> **MS-001 implementation is paused by Sinh for further requirements and mockup development.** See [current intake and resume gates](docs/requirements-follow-up.md). The worktree contains partial, untested form edits: do not continue coding or rebuild the local stack from it until the revised requirements/mockup are reviewed and implementation is explicitly resumed. Operating commands below are reference only during this pause.
+Vietnamese/whole-VND monthly planning for one family. Default **November 2026–December 2027 (14 months)**; configurable 1–120 consecutive months within 2000–2100. One private laptop JSON file is authoritative, shared through **Tailscale private HTTPS** plus a family passphrase.
 
-Vietnamese/whole-VND monthly planning for one family. Configurable **1–120 consecutive months**, initially **November 2026–December 2027**. One private JSON file on the laptop is authoritative; family browsers share it through **private Tailscale HTTPS plus a shared passphrase**.
+MS-001's four implementation phases are now committed on its feature branch following Sinh's explicit request to resume and commit each phase. The basis is the r002 requirements/UAT draft and v003 five-workspace mockup. This is an implementation candidate, **not independent workflow approval, human UAT or production deployment**. Historical review artifacts and the workflow publication blocker are not rewritten. See [implementation details](docs/ms-001.md), [development plan](docs/development-plan.md) and [UAT checklist](docs/uat.md).
 
-MS-001 implementation follows Model → Persistence/access → UI → Integration. This is an implementation candidate, **not human UAT, production security certification, or ordinary PA workflow approval**. No live plan or network configuration is changed by checking out the code. The accepted `foundation-v0.1` remains historical; [foundation notes](docs/mockup.md) describe that older browser-only version.
+## Five workspaces
+
+- **Lịch tài chính:** chronological monthly columns, separate income/expense groups, account reference dates, opening/closing totals; month cards/detail on narrow screens.
+- **Rõ chi:** create/select a Person, Group or Category, then add purpose, details and schedule. Enter the amount later.
+- **Đa thu:** same shared objects, but only objects with income details appear. Unknown/zero/tentative or out-of-month income still qualifies. All objects remain available in Add Income.
+- **Tài khoản:** named cash accounts with dated balance snapshots. History is retained; only the latest applicable reference date contributes.
+- **Công nợ:** separate payable/receivable accounts and dated balances. Manual repayment plans are expenses; collection plans are income. Planning never automatically changes debt balances.
+
+Types differ only by labeled icons, not permissions/calculations. Shared renames apply across income/expenses. Equal-looking names have distinct IDs; there is no implicit merge. Referenced objects cannot be deleted until details are explicitly moved or removed. Account histories cannot be silently deleted.
+
+## Amounts and calculations
+
+All stored amounts are exact integer VND, at most 1 trillion per field. Blank planned amount = **unknown**, not zero. Cash/debt snapshots require a known amount; zero is valid.
+
+| Input | Stored VND |
+|---|---:|
+| `5` / `500` / `5000` | 5,000 / 500,000 / 5,000,000 |
+| `5M` / `5tr` / `5 triệu` | 5,000,000 |
+| `5 trăm` / `5 ngàn` | 500,000 / 5,000 |
+| `5,000` / `5.000` | 5,000,000 |
+| `1,5tr` / `1.5tr` | 1,500,000 |
+| `500 VND` / `500đ` | 500 |
+
+Bare numbers mean thousands. One/two decimal digits are accepted; consistent three-digit comma/dot groups are grouping, **not three decimal places**. Mixed separators, negatives, exponents, unknown units, fractional VND and overflow reject without rounding. Every amount editor shows a parsed preview. Reopened stored amounts include `VND` to avoid accidental rescaling.
+
+- Schedules: once, monthly, every N months (1–120), yearly. Anchors and inclusive ends are explicit; extending the window never extends a routine.
+- Estimate edits preview/confirm the effective occurrence month. Earlier values remain; later change points still apply. Replacing a same-month point is explicit. Schedule changes cannot orphan saved estimate history.
+- Tentative amounts are excluded unless the reversible comparison switch is enabled. There are **no active item-level actuals, payments or transactions**.
+- At the first month and any month containing a cash snapshot, opening cash resets to the sum of each account's latest applicable dated balance. Other accounts may have older dates; those dates are shown. Otherwise the previous closing estimate carries forward, including across January.
+- The **full refresh-month plan** applies: opening + income − expense. Today's balance may already reflect spending; this approximate scenario is not reconciliation or a promise of daily affordability. December snapshots never affect November. Missing data propagates until a complete reset and complete plans resolve it.
+- Debt snapshots alone never change cash; liabilities/receivables are not netted into available money. No automatic settlement, interest or amortization.
 
 ## Local Docker + Caddy test stack
 
@@ -14,94 +44,67 @@ MS-001 implementation follows Model → Persistence/access → UI → Integratio
 npm run local:up
 ```
 
-Open **https://localhost:3081**. This starts a separate loopback-only, synthetic-test stack, leaving the existing app on port 3080 untouched. A local Caddy certificate warning is expected until you choose a browser exception/manual CA trust; host trust is not changed automatically. Retrieve the generated login passphrase privately from `~/.local/share/money-seasons-local-test/passphrase`.
+Open **https://localhost:3081**. This separate loopback-only stack uses private synthetic-test storage and leaves the old port-3080 app alone. **Running this command rebuilds/deploys the current source**; it was not run for this revision. An existing local stack may still be the older candidate with v2 data. Export that original before explicitly converting it.
 
-See [local stack guide](docs/local-stack.md) for certificate verification, private storage, rebuild/stop commands and isolation limits. Do not import real household data into the test stack.
+The generated local-only passphrase lives at `~/.local/share/money-seasons-local-test/passphrase`; open it privately in your editor, never print/paste it into logs/tickets. Caddy uses a local CA, with no automatic host-trust changes. See [local stack guide](docs/local-stack.md). Do not import household data into the test stack.
 
-## Operator setup (separate from implementation)
+## Operator setup (separate authorization)
 
-Node **22+ on Linux**, or Docker Compose. No runtime npm dependencies. First qualify the candidate with synthetic data. Do not reuse the old unauthenticated deployment as if it already had these settings.
+Node 22+ on Linux or Docker Compose; no runtime npm dependencies. Qualify with synthetic data first.
 
-1. Privately provision a **12+ character family passphrase** in a file outside Git, static assets and exports. Use a local trusted editor/secret tool, not a command-line argument or shell-history command containing the secret. File mode must be `0600` (or more restrictive); it must be a regular, non-symlinked file. The app derives a salted scrypt verifier in memory; the private configuration file itself is not encrypted by the app.
-2. Create a dedicated **existing directory outside any Git checkout**, mode `0700`, for the JSON store. Use a local filesystem supporting atomic same-directory rename and file/directory fsync. No symlinked parent components, network share, or multiple app writers. Do not put other applications' data there.
-3. Configure the following environment variables privately. These examples contain **placeholders, not working credentials**:
+1. Privately provision a 12+ character passphrase in a regular, non-symlinked file **outside Git/public assets**, mode **0600**. Do not put the secret in a command argument or shell history. The app keeps a salted scrypt verifier in memory; the file is not encrypted by the app.
+2. Provision a dedicated data directory **outside any Git checkout**, mode **0700**, owned by the app UID, with no symlinked parents. Use a local filesystem supporting atomic same-directory rename and file/directory fsync, never a network share or multiple writers.
+3. Configure private paths and exact controlled HTTPS origins (placeholders below, no real secrets):
 
    ```sh
    export MONEY_SEASONS_DATA_DIR=/absolute/private/money-seasons-data
    export MONEY_SEASONS_PASSPHRASE_FILE=/absolute/private/money-seasons-passphrase
    export MONEY_SEASONS_ORIGINS=https://your-private-family-name.your-tailnet.ts.net
-   ```
-
-   Origins are exact HTTPS origins, comma-separated if needed, with **no trailing slash/path**. Only configure origins controlled by the operator. Missing/unsafe config fails closed; there is no production insecure-cookie switch.
-
-4. Start **one** app process:
-
-   ```sh
-   npm start                         # default 127.0.0.1:3080
-   # OR, after setting the same variables:
+   npm start                         # 127.0.0.1:3080 by default
+   # OR:
    docker compose config --quiet
    docker compose up -d --build --wait
    ```
 
-   Docker runs as `node` (UID 1000), with a read-only root and loopback-only published port. Its `/data` bind mount is the sole writable application directory; its passphrase mount is read-only. **Both host paths must already exist and be accessible to UID 1000**, with the private modes above. The server refuses a data directory owned by another UID. Do not fix this by making files world-readable/writable or running privileged. Do not set Node `HOST=0.0.0.0` outside the container. `PORT` overrides Node's port; `MONEY_SEASONS_PORT` overrides the Compose loopback port.
+   Origins have no trailing slash/path; comma-separate multiple origins. Missing/unsafe config fails closed; there is **no production insecure-cookie switch**. Direct HTTP is a transport/health endpoint, not a production login URL.
+4. Docker runs as **UID 1000**, read-only root, dropped capabilities, loopback port only. Host data/secret paths must already exist and be accessible to UID 1000 with the private modes above. Do not broaden permissions or run privileged. Keep one writer.
+5. Operator separately provisions **Tailscale private HTTPS**, preserving Host/Origin, and restricts access to family devices. **No Funnel**, public listener, ordinary LAN publication or database. The app does not change TLS/Tailscale/ACLs. Rate limits use the direct peer, not untrusted forwarded headers; a proxy shares the client limit.
+6. Verify allowed family device → HTTPS/passphrase → synthetic shared plan; **unauthorized device denied**; unauthenticated API denied; no LAN/public reachability. These real-network checks remain pending.
 
-5. The operator separately configures/verifies a **Tailscale private HTTPS reverse proxy** to the loopback app, preserving the original Host and Origin, with tailnet access restricted to allowed family devices. **No Funnel, public listener, ordinary LAN publication, or database service.** The app does not configure Tailscale, TLS, or ACLs. Never forward untrusted client identity headers: rate limits deliberately use the direct peer address, so a local proxy shares the client limit across family members.
+Laptop sleep/offline means unavailable, not an offline queue. `/healthz` reports process health, not backup/store/network qualification. No finance payloads/passphrases are logged.
 
-6. Before real use, verify: allowed family device → HTTPS → passphrase required → shared synthetic plan editable; unauthorized device denied; unauthenticated API denied; no LAN/public reachability. Direct `http://localhost:3080` is a health/transport endpoint, **not the production browser login URL** (cookies require HTTPS).
+## Saving, conflicts and recovery
 
-```sh
-curl http://127.0.0.1:3080/healthz     # process health only; no finance data
-# Docker lifecycle, only for the operator's identified instance:
-docker compose logs --tail=50 web
-docker compose down
-```
+Acknowledged saves are serialized/revision-checked, atomically renamed and file/directory-fsynced. Another browser's newer revision rejects your stale write; no automatic merge/overwrite. The unsaved candidate and form are retained. Close the form, **export the unsaved draft**, read back status, then explicitly reload/reapply by hand. A lost response requires rereading before retry; uncertain durability blocks more writes until operator recovery.
 
-Stopping/rebuilding with the **same data directory** preserves acknowledged saves; changing directories creates a different store. Laptop sleep/offline means unavailable, not an offline queue. Logs exclude plan bodies/passphrases. `/healthz` is not a finance-store, network-security or backup certification.
+Exports are **unencrypted plan-only JSON**, not secrets/sessions/server revisions. Imports validate/preview/confirm whole-plan replacement. Maximum raw import/save request: 1,000,000 UTF-8 bytes. Store corruption does not silently become a demo. Local persistence is **not a backup**: retain manual exports separately. See [operator recovery](docs/ms-001.md#operator-recovery).
 
-## Use the plan
+### Existing v1/v2 plans
 
-1. Log in. An empty server does **not** silently save a sample or migrate browser data. Set the period and cash **immediately before its first month**, or explicitly leave cash unknown; confirm initialization.
-2. Add income/expenses. Category and optional person/household text are independent labels, not accounts. Amount blank = unknown; `0` is real.
-3. Choose once, monthly, every-N-months, or yearly, with an explicit anchor/end. Extending the plan never extends a routine.
-4. Read the chronological year groups. Month detail crosses December–January with one continuous cash balance. Negative/incomplete labels concern known monthly totals, **not daily affordability or financial advice**.
-5. Record an actual for the selected **year-month**. It replaces that occurrence's estimate once. Clear it to restore the estimate. A tentative item's actual always counts; tentative estimates are excluded unless the comparison switch is on.
-6. Estimate edits preview/confirm an effective occurrence month. Earlier estimates and every actual remain; existing later change points remain. Same-month change-point replacement is explicit. Schedule edits cannot orphan history/actuals. Deleting previews the removed series/history/actuals and confirms.
-7. Save status shows the acknowledged revision. If another family browser saved first, the stale write is rejected. The unsaved candidate and form remain; close the form to **export the unsaved draft**, then read back status. Explicitly reload the server plan and reapply wanted edits by hand. No automatic merge or blind overwrite. Network/lost-acknowledgement errors require rereading before retry; uncertain durability requires operator recovery.
-8. Export regularly to a safe private location. Exports are **unencrypted** and contain plan fields only, not sessions, secrets or server revisions. Import validates/previews and confirms whole-plan replacement. Maximum raw API/import JSON is 1,000,000 UTF-8 bytes.
+No automatic upload, conversion or actual deletion. A legacy server store is read/export-only until explicitly converted. Browser keys remain untouched; old origins/profiles are isolated, so export from the old app if the key is inaccessible.
 
-## Existing v1 browser plan / recovery
+1. Download/keep the original, including actuals and old opening cash.
+2. Review the original-year period and conservative label→object mapping (one separately identified object per old detail; equal text is not identity).
+3. Explicitly acknowledge that old actuals are **excluded from the active plans-only forecast**. They remain in the downloaded original and, for a legacy server store, a byte-exact private `original-<sha256>.json` archive before replacement.
+4. Confirm conversion/replacement against the loaded revision. Old plan IDs, years and estimate history remain; no January amount is relabeled as November. Old opening cash has no account/date and is **not converted into a made-up balance**. Enter genuine dated snapshots separately; missing cash remains unknown.
+5. Extend the period separately if needed. Conversion of real data remains an operator-authorized action, not part of implementation tests.
 
-**Export the original before upgrade or migration.** Browser storage is origin/profile-specific: an old `localhost` key is not accessible from the new private HTTPS origin. Export from the old app/profile first, then import that v1 file after login to the candidate. If the old key is accessible, the migration button offers the same explicit flow.
-
-- Download the original v1 bytes and acknowledge keeping them before conversion/upload. The old `money-seasons.plan.v1` key is never modified/deleted.
-- Convert **only the original January–December year**. Existing 2027 items/IDs/actuals remain in their 2027 months; zero actuals survive. Opening cash still means immediately before that January.
-- Preview and confirm initialization/replacement against the loaded server revision. Cancellation, invalid input and conflicts never silently replace the server.
-- **Separately** extend to November 2026–December 2027. A changed first month requires an explicitly reconfirmed new opening value or unknown; January cash must not be reused as November cash.
-
-The app has **no automatic backups, encryption at rest, off-machine replication or recovery from disk loss**. A local disk file is persistence, not a backup. Keep manual exports separately; see the [failure and lock recovery procedure](docs/ms-001.md#operator-recovery).
-
-## Checks (isolated synthetic data only)
+## Checks (isolated synthetic fixtures)
 
 ```sh
 npm ci
 npm run check
-node --test test/model.test.mjs
+node --test test/model.test.mjs test/amount-input.test.mjs test/accounts-debts.test.mjs
 node --test test/server.test.mjs test/persistence.test.mjs test/auth.test.mjs
 node --test test/deployment.test.mjs
 npm test
 BROWSER_PATH="$(command -v google-chrome)" npm run test:browser
 ```
 
-Playwright/axe are development-only dependencies. Without a system Chrome, install Playwright Chromium with `npx playwright install chromium`. The runner **owns a fresh ephemeral loopback child server, temporary store and isolated browser profiles**; it refuses `BASE_URL` and never attaches to port 3080 or the normal browser profile. Artifacts go to a fresh `/tmp/ms-001-browser-*` directory (`BROWSER_ARTIFACTS` can select another temporary directory). Synthetic credentials and the test harness are excluded from the production image. Production startup never activates the test-only insecure-cookie option.
+Playwright/axe are pinned development dependencies. The browser runner owns an ephemeral loopback child server, private temporary store and isolated profiles; refuses `BASE_URL`; never attaches to 3080/3081 or a normal profile. Artifacts go under `/tmp/ms-001-browser.*`. Fault hooks/fixture insecure cookies are test-only and excluded from Docker. These checks are not independent exact-FeatureSHA review, security certification or the [16 human UAT scenarios](docs/uat.md).
 
-The recorded r001 requirements matrix additionally asserts exact Chrome `155.0.8059.39` before syntax. Local checks are **not an independently authorized exact-FeatureSHA matrix review**. Docker image/runtime qualification, actual Tailscale/ACL verification, other browsers/physical devices, and all 16 Sinh UAT scenarios remain separate gates. See [implementation details and traceability](docs/ms-001.md), [development plan](docs/development-plan.md), and [ticket reconciliation](docs/tickets.md).
+## Code / exclusions
 
-## Code
+`public/model.js`: v3 objects/plans/accounts/debts/forecast. `amount-input.js`: exact parser. `legacy-model.js`: read/convert old schemas and historical regression only. `persistence.mjs`, `auth.mjs`, `server.mjs`: private storage/access/API. `public/app.js`: five views and safe edit/recovery flows.
 
-- `public/model.js`: v2 validation, recurrence/history/forecast, explicit v1 conversion.
-- `persistence.mjs`: private single-writer JSON envelope, revision CAS, serialized atomic/fsynced saves.
-- `auth.mjs`, `server.mjs`: shared passphrase sessions, same-origin/CSRF checks, authenticated API, static allowlist.
-- `public/app.js`, `index.html`, `styles.css`: Vietnamese UI, conflicts/recovery, migration, year groups and native dialogs.
-- `test/`, `scripts/`: synthetic deterministic/failure/browser checks.
-
-No PostgreSQL/LPG/SQLite, accounts/roles, multiple plans, automatic backups, bank links, daily accounting, assets/debts or preparation targets in this slice. See [Git Flow guide](docs/branching.md); work stays on the feature branch until review/integration. No remote backup is implied by a local Git commit.
+Deferred: databases, cloud/banks, automatic/off-machine backups, multiple plans, personal roles, membership, automatic debt allocation, transaction ledger/actual entry, daily forecasting, noncash asset pricing and preparation targets. Follow [Git Flow](docs/branching.md); local commits do not imply remote backup, merge, push or release.

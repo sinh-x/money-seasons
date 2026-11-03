@@ -37,7 +37,10 @@ test('anchored once/N/yearly recurrence and forward estimate history', () => {
   assert.throws(() => reviseEstimate(p, 'one', '2026-10', 10));
 });
 test('unknown versus zero and reversible tentative inclusion; no active actual data', () => {
-  assert.equal(forecast(scenario({ amount: null }))[0].missing, 1);
+  const unknownExpense = forecast(scenario({ amount: null }))[0];
+  assert.equal(unknownExpense.missing, 1); assert.equal(unknownExpense.expenseMissing, 1); assert.equal(unknownExpense.incomeMissing, 0);
+  const unknownIncome = forecast(scenario({ type: 'income', amount: null }))[0];
+  assert.equal(unknownIncome.incomeMissing, 1); assert.equal(unknownIncome.expenseMissing, 0);
   assert.equal(forecast(scenario({ amount: 0 }))[0].missing, 0);
   const p = scenario({ status: 'tentative' }); assert.equal(forecast(p)[0].expense, 0); assert.equal(forecast(p, true)[0].expense, 10); assert.equal(forecast(p)[0].expense, 0);
   assert.throws(() => scenario({ actuals: { '2026-11': 0 } }));
@@ -63,4 +66,8 @@ test('explicit conversion preserves old original, years/plans; never fabricates 
   const p = convertLegacy(old, { confirmed: true }); assert.equal(JSON.stringify(old), raw);
   assert.equal(p.startMonth, '2027-01'); assert.equal(p.items[0].id, 'old'); assert.equal(p.snapshots.length, 0);
   assert.equal(forecast(p)[10].expense, 10); assert.equal(forecast(p)[10].incomplete, true);
+  old.items.push({ ...structuredClone(old.items[0]), id: 'second' });
+  const duplicates = convertLegacy(old, { confirmed: true });
+  assert.equal(duplicates.objects.length, 2); assert.equal(duplicates.objects[0].name, duplicates.objects[1].name);
+  assert.notEqual(duplicates.items[0].objectId, duplicates.items[1].objectId);
 });

@@ -60,6 +60,21 @@ test('archive failure leaves original and revision intact', async t => {
   } finally { await reopened.close(); }
 });
 
+test('populated active objects, estimates, cash/debt history survive restart byte-for-field', async t => {
+  const { store, dir } = await fixture(t), p = blankPlan('2025-11', '2026-01');
+  p.objects = [{ id: 'group', name: 'Synthetic family', type: 'group' }];
+  p.items = [{ id: 'plan', objectId: 'group', name: 'Synthetic', description: '', type: 'expense', status: 'confirmed', amount: null,
+    recurrence: { kind: 'interval', anchor: p.startMonth, end: p.endMonth, everyMonths: 1 }, amountChanges: [{ month: '2025-12', amount: 0 }] }];
+  p.accounts = [{ id: 'cash', name: 'Cash' }];
+  p.snapshots = [{ id: 'snap1', accountId: 'cash', date: '2025-11-01', amount: 3000 }, { id: 'snap2', accountId: 'cash', date: '2025-12-01', amount: 4000 }];
+  p.debtAccounts = [{ id: 'debt', name: 'Debt', direction: 'payable' }];
+  p.debtSnapshots = [{ id: 'debt-snap', accountId: 'debt', date: '2025-11-01', amount: 9000 }];
+  const saved = await store.save(p, 0); await store.close();
+  const reopened = await openStore(dir);
+  try { assert.deepEqual(await reopened.read(), saved); assert.deepEqual((await reopened.read()).plan, p); }
+  finally { await reopened.close(); }
+});
+
 test('serialized expected-revision check gives one winner; stale edits do not overwrite', async t => {
   const { store } = await fixture(t);
   const results = await Promise.allSettled([store.save(blankPlan(), 0), store.save({ ...blankPlan(), name: 'Other' }, 0)]);

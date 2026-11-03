@@ -64,7 +64,7 @@ function renderStatus() {
 }
 function hasBrowserLegacy() { try { return !!localStorage.getItem(KEY); } catch { return false; } }
 const button = (text, action, attrs = '', klass = '') => `<button class="button ${klass}" data-action="${action}" ${attrs}>${text}</button>`;
-const stat = (title, value, note, klass = '') => `<article class="stat ${klass}"><span class="stat-label">${h(title)}</span><strong class="stat-value">${h(value)}</strong><small>${h(note)}</small></article>`;
+const stat = (title, value, note, klass = '') => `<article class="stat ${klass}"><span class="stat-label">${h(title)}</span><strong class="stat-value${String(value).length > 16 ? ' long-value' : ''}">${h(value)}</strong><small>${h(note)}</small></article>`;
 const objectName = id => plan.objects.find(o => o.id === id)?.name ?? '';
 const objectLabel = o => `${TYPES[o.type][0]} ${TYPES[o.type][1]} · ${o.name} [${o.id.slice(-8)}]`;
 function monthOptions(value) { return range().map(m => `<option value="${m}" ${m === value ? 'selected' : ''}>${label(m)}</option>`).join(''); }
@@ -85,6 +85,7 @@ const sumItems = (items, month) => items.filter(i => occurs(i, month) && (i.stat
   const value = plannedAmount(i, month); if (value === null) out.missing++; else out.known += value; return out;
 }, { known: 0, missing: 0 });
 const sumText = out => `${money(out.known)}${out.missing ? ' + ? (chưa biết)' : ''}`;
+const flowText = (month, type) => sumText({ known: month[type], missing: month[`${type}Missing`] });
 function schedule(i) { const r = i.recurrence; return `${r.kind === 'once' ? 'Một lần' : r.everyMonths === 12 ? 'Hằng năm' : `Mỗi ${r.everyMonths} tháng`} · ${label(r.anchor)}–${label(r.end)}`; }
 function itemPage(kind) {
   const expense = kind === 'expense', items = plan.items.filter(i => i.type === kind);
@@ -105,12 +106,12 @@ function itemPage(kind) {
 function calendarPage() {
   const data = results(), selected = data.find(m => m.month === selectedMonth);
   return heading(TITLES.calendar, 'Số dư tài khoản + kế hoạch thu chi. Một dòng thời gian liên tục, không đặt lại khi sang năm.', button('＋ Khoản thu', 'item', 'data-kind="income" data-mutate') + button('＋ Khoản chi', 'item', 'data-kind="expense" data-mutate', 'primary')) +
-    `<div class="summary-grid">${stat(`Đầu tháng ${label(selectedMonth)}`, money(selected.opening), selected.openingIncomplete ? 'Phần đã biết · chưa đủ dữ liệu' : selected.reset ? 'Mốc số dư tài khoản, không phải thu.' : 'Chuyển từ cuối tháng trước.')}${stat('Thu dự kiến', money(selected.income), 'Không phải thu nhập thực nhận.')}${stat('Chi dự kiến', money(selected.expense), selected.missing ? `${selected.missing} khoản chưa biết số tiền.` : 'Toàn bộ kế hoạch tháng.')}${stat('Cuối tháng dự kiến', money(selected.closing), selected.incomplete ? 'Phần đã biết · chưa đủ dữ liệu' : selected.closing < 0 ? 'Số dư âm' : 'Ước tính theo tháng', selected.closing < 0 ? 'negative' : 'highlight')}</div>
+    `<div class="summary-grid">${stat(`Đầu tháng ${label(selectedMonth)}`, money(selected.opening), selected.openingIncomplete ? 'Phần đã biết · chưa đủ dữ liệu' : selected.reset ? 'Mốc số dư tài khoản, không phải thu.' : 'Chuyển từ cuối tháng trước.')}${stat('Thu dự kiến', flowText(selected, 'income'), 'Không phải thu nhập thực nhận.')}${stat('Chi dự kiến', flowText(selected, 'expense'), selected.expenseMissing ? `${selected.expenseMissing} khoản chưa biết số tiền.` : 'Toàn bộ kế hoạch tháng.')}${stat('Cuối tháng dự kiến', money(selected.closing), selected.incomplete ? 'Phần đã biết · chưa đủ dữ liệu' : selected.closing < 0 ? 'Số dư âm' : 'Ước tính theo tháng', selected.closing < 0 ? 'negative' : 'highlight')}</div>
     <p class="info amber">Mỗi tháng có số dư mới sẽ đặt lại mốc gộp từ số dư gần nhất của từng tài khoản, kể cả ngày cũ. Vẫn tính toàn bộ kế hoạch tháng cập nhật; có thể trùng với chi tiêu đã nằm trong số dư. Đây là ước tính, không phải đối soát giao dịch.</p>${controls()}
     <div class="controls"><h2>${data.length} tháng · ${label(plan.startMonth)} → ${label(plan.endMonth)}</h2><div class="segmented" role="group" aria-label="Kiểu hiển thị">${button('Bảng chi tiết', 'table', `aria-pressed="${table}"`)}${button('Thẻ tháng', 'cards', `aria-pressed="${!table}"`)}</div></div>${table ? forecastTable(data) : forecastCards(data)}`;
 }
 function forecastTable(data) {
-  const row = (title, key, klass = 'total-row') => `<tr class="${klass}"><th scope="row" class="row-label">${title}</th>${data.map(m => `<td>${h(money(m[key]))}${key === 'opening' ? `<span class="sub">${m.reset ? 'Mốc tài khoản mới' : 'Chuyển từ tháng trước'}${m.openingIncomplete ? ' · chưa đủ dữ liệu' : ''}</span>` : key === 'closing' ? `<span class="sub">${m.incomplete ? 'Chưa đủ dữ liệu' : 'Đã biết'}${m.closing < 0 ? ' · Số dư âm' : ''}</span>` : ''}</td>`).join('')}</tr>`;
+  const row = (title, key, klass = 'total-row') => `<tr class="${klass}"><th scope="row" class="row-label">${title}</th>${data.map(m => `<td>${h(['income', 'expense'].includes(key) ? flowText(m, key) : money(m[key]))}${key === 'opening' ? `<span class="sub">${m.reset ? 'Mốc tài khoản mới' : 'Chuyển từ tháng trước'}${m.openingIncomplete ? ' · chưa đủ dữ liệu' : ''}</span>` : key === 'closing' ? `<span class="sub">${m.incomplete ? 'Chưa đủ dữ liệu' : 'Đã biết'}${m.closing < 0 ? ' · Số dư âm' : ''}</span>` : ''}</td>`).join('')}</tr>`;
   const section = type => `<tr class="section-row"><th scope="row" class="row-label">${type === 'income' ? 'THU DỰ KIẾN' : 'CHI DỰ KIẾN'}</th>${data.map(() => '<td></td>').join('')}</tr>` +
     plan.objects.filter(o => plan.items.some(i => i.objectId === o.id && i.type === type)).map(o => {
       const items = plan.items.filter(i => i.objectId === o.id && i.type === type);
@@ -124,7 +125,7 @@ function forecastCards(data) {
   let year = '';
   return `<div class="month-card-grid">${data.map(m => {
     const heading = year === m.month.slice(0, 4) ? '' : `<h3 class="year-heading">${year = m.month.slice(0, 4)}</h3>`;
-    return `${heading}<article class="month-card" data-month="${m.month}"><h3>${label(m.month)}</h3><strong class="closing">${h(money(m.closing))}</strong><dl><dt>Đầu tháng</dt><dd>${h(money(m.opening))}</dd><dt>Thu dự kiến</dt><dd>${h(money(m.income))}</dd><dt>Chi dự kiến</dt><dd>${h(money(m.expense))}</dd></dl><small>${m.reset ? 'Mốc tài khoản mới' : 'Chuyển từ tháng trước'}${m.incomplete ? ' · Chưa đủ dữ liệu' : ''}${m.closing < 0 ? ' · Số dư âm' : ''}</small>${button('Chi tiết tháng', 'month', `data-month="${m.month}"`, 'text')}</article>`;
+    return `${heading}<article class="month-card" data-month="${m.month}"><h3>${label(m.month)}</h3><strong class="closing">${h(money(m.closing))}</strong><dl><dt>Đầu tháng</dt><dd>${h(money(m.opening))}</dd><dt>Thu dự kiến</dt><dd>${h(flowText(m, 'income'))}</dd><dt>Chi dự kiến</dt><dd>${h(flowText(m, 'expense'))}</dd></dl><small>${m.reset ? 'Mốc tài khoản mới' : 'Chuyển từ tháng trước'}${m.incomplete ? ' · Chưa đủ dữ liệu' : ''}${m.closing < 0 ? ' · Số dư âm' : ''}</small>${button('Chi tiết tháng', 'month', `data-month="${m.month}"`, 'text')}</article>`;
   }).join('')}</div>`;
 }
 function accountsPage(debt) {
@@ -235,7 +236,7 @@ function setupDialog(isNew = false) {
 function monthDialog(month) {
   selectedMonth = month; const m = results().find(m => m.month === month);
   openEditor(`Tháng ${label(month)}`, `${m.reset ? 'Mốc tài khoản' : 'Chuyển từ tháng trước'} · Đầu ${money(m.opening)} · Cuối ${money(m.closing)}${m.incomplete ? ' · Chưa đủ dữ liệu' : ''}${m.closing < 0 ? ' · Số dư âm' : ''}`,
-    `<div class="field full"><h3>Thu dự kiến · ${h(money(m.income))}</h3>${m.entries.filter(i => i.type === 'income').map(i => `<p>${h(objectName(i.objectId))} · ${h(i.name)}: ${h(money(i.planned))}${!i.included ? ' · Không tính' : ''}</p>`).join('') || '<p>Chưa có khoản thu.</p>'}<h3>Chi dự kiến · ${h(money(m.expense))}</h3>${m.entries.filter(i => i.type === 'expense').map(i => `<p>${h(objectName(i.objectId))} · ${h(i.name)}: ${h(money(i.planned))}${!i.included ? ' · Không tính' : ''}</p>`).join('') || '<p>Chưa có khoản chi.</p>'}<h3>Số dư tham chiếu</h3>${m.references.map(a => `<p>${h(a.name)}: ${h(money(a.snapshot?.amount ?? null))} · ${a.snapshot?.date ?? 'Chưa có mốc'}</p>`).join('')}</div>`, null);
+    `<div class="field full"><h3>Thu dự kiến · ${h(flowText(m, 'income'))}</h3>${m.entries.filter(i => i.type === 'income').map(i => `<p>${h(objectName(i.objectId))} · ${h(i.name)}: ${h(money(i.planned))}${!i.included ? ' · Không tính' : ''}</p>`).join('') || '<p>Chưa có khoản thu.</p>'}<h3>Chi dự kiến · ${h(flowText(m, 'expense'))}</h3>${m.entries.filter(i => i.type === 'expense').map(i => `<p>${h(objectName(i.objectId))} · ${h(i.name)}: ${h(money(i.planned))}${!i.included ? ' · Không tính' : ''}</p>`).join('') || '<p>Chưa có khoản chi.</p>'}<h3>Số dư tham chiếu</h3>${m.references.map(a => `<p>${h(a.name)}: ${h(money(a.snapshot?.amount ?? null))} · ${a.snapshot?.date ?? 'Chưa có mốc'}</p>`).join('')}</div>`, null);
 }
 function prepareMigration(raw, fromServer = false) {
   const source = JSON.parse(raw), next = convertLegacy(source, { confirmed: true });

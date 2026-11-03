@@ -99,7 +99,8 @@ export async function openStore(directory, { hook = async () => {} } = {}) {
             if (e.code !== 'EEXIST') throw new StoreError('original-preservation-failed');
             const existing = await fs.open(archive, constants.O_RDONLY | constants.O_NOFOLLOW);
             try {
-              if (!privateFile(await existing.stat()) || !(await existing.readFile()).equals(original)) throw new StoreError('original-preservation-failed');
+              const stat = await existing.stat();
+              if (!privateFile(stat) || stat.size !== original.length || !(await existing.readFile()).equals(original)) throw new StoreError('original-preservation-failed');
             } finally { await existing.close(); }
           }
           const directory = await fs.open(dir, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
