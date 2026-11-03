@@ -4,8 +4,25 @@ services:
     build: .
     ports:
       - "127.0.0.1:${MONEY_SEASONS_PORT:-3080}:3080"
+    environment:
+      MONEY_SEASONS_DATA_DIR: /data
+      MONEY_SEASONS_PASSPHRASE_FILE: /run/private/passphrase
+      MONEY_SEASONS_ORIGINS: ${MONEY_SEASONS_ORIGINS:?Set the exact private HTTPS origin}
+    volumes:
+      - type: bind
+        source: ${MONEY_SEASONS_DATA_DIR:?Set a private existing directory outside Git}
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MONEY_SEASONS_PASSPHRASE_FILE:?Set a private existing passphrase file}
+        target: /run/private/passphrase
+        read_only: true
+        bind:
+          create_host_path: false
     init: true
     restart: unless-stopped
+    stop_grace_period: 30s
     read_only: true
     cap_drop:
       - ALL

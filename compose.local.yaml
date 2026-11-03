@@ -1,0 +1,90 @@
+# Standalone local synthetic stack: do not merge this with compose.yaml.
+name: money-seasons-local-test
+services:
+  web:
+    build: .
+    image: money-seasons-local-test-web:latest
+    environment:
+      MONEY_SEASONS_DATA_DIR: /data
+      MONEY_SEASONS_PASSPHRASE_FILE: /run/private/passphrase
+      MONEY_SEASONS_ORIGINS: https://localhost:3081
+    volumes:
+      - type: bind
+        source: ${HOME}/.local/share/money-seasons-local-test/data
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${HOME}/.local/share/money-seasons-local-test/passphrase
+        target: /run/private/passphrase
+        read_only: true
+        bind:
+          create_host_path: false
+    # No app port is published: only Caddy can reach it over this private bridge.
+    networks: [backend]
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    pids_limit: 64
+    labels:
+      org.money-seasons.purpose: local-synthetic-test
+    logging:
+      driver: json-file
+      options: {max-size: 5m, max-file: "2"}
+  caddy:
+    build:
+      context: ./ops
+      dockerfile: Dockerfile.caddy-local
+    image: money-seasons-local-test-caddy:2.10.2
+    user: "1000:1000"
+    # Leave room for health-check exec processes under the retained 64-PID cap.
+    environment:
+      GOMAXPROCS: "2"
+    ports:
+      - "127.0.0.1:3081:3081"
+    networks: [edge, backend]
+    depends_on:
+      web:
+        condition: service_healthy
+    volumes:
+      - type: bind
+        source: ./ops/Caddyfile.local
+        target: /etc/caddy/Caddyfile
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${HOME}/.local/share/money-seasons-local-test/caddy
+        target: /data
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /config:rw,noexec,nosuid,size=8m,uid=1000,gid=1000,mode=0700
+      - /tmp:rw,noexec,nosuid,size=16m
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    pids_limit: 64
+    labels:
+      org.money-seasons.purpose: local-synthetic-test
+    healthcheck:
+      test: [CMD, wget, -q, --no-check-certificate, -O, /dev/null, "https://localhost:3081/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    logging:
+      driver: json-file
+      options: {max-size: 5m, max-file: "2"}
+networks:
+  # Docker suppresses published ports on an internal-only network. Caddy alone
+  # joins this dedicated edge bridge; publication is still strictly loopback.
+  edge: {}
+  backend:
+    internal: true

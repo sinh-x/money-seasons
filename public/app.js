@@ -1,307 +1,364 @@
-import { MONTHS, MAX_AMOUNT, demoPlan, blankPlan, validatePlan, forecast } from './model.js';
-
-const $ = selector => document.querySelector(selector);
-const $$ = selector => [...document.querySelectorAll(selector)];
-const KEY = 'money-seasons.plan.v1';
-const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+import { MAX_BYTES, blankPlan, demoPlan, validatePlan, forecast, monthRange, occurs, plannedAmount, estimateMonth, changeWindow, reviseEstimate, latestSnapshot, cashBaseline, debtTotal, setSnapshot, convertLegacy, todayISO } from './model.js';
+import { parseAmount, formatAmountInput } from './amount-input.js';
+const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
+const h = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = value => value === null ? 'Chưa biết' : `${new Intl.NumberFormat('vi-VN').format(value)} ₫`;
-const short = value => `${new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 1 }).format(value / 1_000_000)} tr`;
-let plan = demoPlan();
-let view = 'year';
-let selectedMonth = 1;
-let editingId = null;
-let actualId = null;
-let setupNew = false;
-let confirmAction;
-let toastTimer;
-
-function storageWarning(message) {
-  $('#storage-warning').textContent = message;
-  $('#storage-warning').hidden = !message;
+const label = month => `${month.slice(5)} / ${month.slice(0, 4)}`;
+const TYPES = { person: ['♙', 'Cá nhân'], group: ['♧', 'Nhóm'], category: ['▦', 'Danh mục'] };
+const TITLES = { calendar: 'Lịch tài chính', expense: 'Rõ chi', income: 'Đa thu', accounts: 'Tài khoản & số dư', debts: 'Công nợ' };
+const KEY = 'money-seasons.plan.v1';
+let plan = blankPlan(), revision = 0, initialized = false, csrf = '', serverLegacy = null;
+let view = 'calendar', selectedMonth = plan.startMonth, table = innerWidth > 760, tentative = false;
+let pending = null, busy = false, confirmAction, submitEditor, migration = null, focusSource, toastTimer;
+const range = () => monthRange(plan.startMonth, plan.endMonth);
+const results = () => forecast(plan, tentative);
+const blocked = () => busy || !!pending || !!serverLegacy;
+// Ephemeral view state only: never included in plan saves/exports or API writes.
+const collapsed = new Set();
+const hiddenGroup = key => collapsed.has(key) ? 'hidden' : '';
+function collapseButton(key, title, controls, text = title) {
+  return `<button type="button" class="collapse-toggle" data-collapse="${h(key)}" aria-expanded="${!collapsed.has(key)}" aria-controls="${h(controls)}" aria-label="${collapsed.has(key) ? 'Mở rộng' : 'Thu gọn'} ${h(title)}">${h(text)}</button>`;
 }
-try {
-  const saved = localStorage.getItem(KEY);
-  if (saved) plan = validatePlan(JSON.parse(saved));
-} catch {
-  storageWarning('Không đọc được dữ liệu đã lưu. Đang hiển thị mẫu tạm thời; chưa thay thế dữ liệu cũ. Hãy kiểm tra bản sao trước khi lưu thay đổi.');
+function collapseKeys() {
+  if (view === 'calendar') return table ? ['section:income', 'section:expense', ...['income', 'expense'].flatMap(type => plan.objects.filter(o => plan.items.some(i => i.objectId === o.id && i.type === type)).map(o => `calendar:${type}:${o.id}`))] : [];
+  if (view === 'income' || view === 'expense') return plan.objects.filter(o => view === 'expense' || plan.items.some(i => i.objectId === o.id && i.type === view)).map(o => `object:${view}:${o.id}`);
+  return [`history:${view}`];
 }
-
-function toast(message) {
-  clearTimeout(toastTimer);
-  $('#toast').textContent = message;
-  $('#toast').hidden = false;
-  toastTimer = setTimeout(() => { $('#toast').hidden = true; }, 4500);
+function collapseTools() {
+  return collapseKeys().length ? '<div class="collapse-tools" role="group" aria-label="Mức chi tiết"><button type="button" class="button small" data-collapse-all="close">Thu gọn tất cả</button><button type="button" class="button small" data-collapse-all="open">Mở rộng tất cả</button></div>' : '';
 }
-
-function commit(next, message = 'Đã lưu trên trình duyệt này.') {
-  const valid = validatePlan(next);
-  forecast(valid, true); // Check arithmetic bounds before replacing any existing state.
-  plan = valid;
-  let saved = true;
-  try {
-    localStorage.setItem(KEY, JSON.stringify(plan));
-    storageWarning('');
-  } catch {
-    saved = false;
-    storageWarning('Không lưu được trên trình duyệt. Thay đổi chỉ ở phiên đang mở và có thể mất khi tải lại. Hãy xuất kế hoạch ngay để giữ bản sao.');
-  }
+function toggleCollapse(target) {
+  const key = target.dataset.collapse, all = target.dataset.collapseAll;
+  if (key !== undefined) { if (collapsed.has(key)) collapsed.delete(key); else collapsed.add(key); }
+  else for (const entry of collapseKeys()) { if (all === 'close') collapsed.add(entry); else collapsed.delete(entry); }
+  // Table/region scrolling and keyboard focus survive the view-only rerender.
+  const scrollers = $$('.table-scroll, .history-scroll').map(e => ({ left: e.scrollLeft, top: e.scrollTop }));
   render();
-  toast(saved ? message : 'Chưa lưu được. Hãy xuất bản sao trước khi đóng trang.');
+  const next = key !== undefined ? $$('[data-collapse]').find(e => e.dataset.collapse === key) : $$('[data-collapse-all]').find(e => e.dataset.collapseAll === all);
+  next?.focus({ preventScroll: true });
+  $$('.table-scroll, .history-scroll').forEach((e, index) => { if (scrollers[index]) { e.scrollLeft = scrollers[index].left; e.scrollTop = scrollers[index].top; } });
 }
-
-function show(id) { if (!$(id).open) $(id).showModal(); }
+function toast(message) { clearTimeout(toastTimer); $('#toast').textContent = message; $('#toast').hidden = false; toastTimer = setTimeout(() => { $('#toast').hidden = true; }, 5000); }
+function warning(message) { $('#storage-warning').textContent = message; $('#storage-warning').hidden = !message; }
+function authenticated(value) { $('#access-panel').hidden = value; $('#application').hidden = !value; if (!value) $$('dialog[open]').forEach(d => d.close()); }
+async function api(url, options = {}) {
+  const response = await fetch(url, { ...options, headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf, ...options.headers } });
+  const result = await response.json();
+  if (!response.ok) { if (response.status === 401) authenticated(false); throw Object.assign(new Error(result.error || 'request-failed'), { status: response.status }); }
+  return result;
+}
+function download(raw, filename) {
+  const url = URL.createObjectURL(new Blob([raw], { type: 'application/json' })), link = document.createElement('a');
+  link.href = url; link.download = filename; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 function confirmChange(title, message, action) {
-  $('#confirm-title').textContent = title;
-  $('#confirm-message').textContent = message;
-  confirmAction = action;
-  show('#confirm-dialog');
+  $('#confirm-title').textContent = title; $('#confirm-message').textContent = message; confirmAction = action; $('#confirm-dialog').showModal();
 }
-const months = () => forecast(plan, $('#include-tentative').checked);
-const amountInput = value => {
-  if (value.trim() === '') return null;
-  const n = Number(value);
-  if (!Number.isSafeInteger(n) || n < 0 || n > MAX_AMOUNT) throw new Error('Nhập số đồng nguyên từ 0 đến 1.000.000.000.000, hoặc để trống nếu chưa biết.');
-  return n;
-};
-
+async function load() {
+  const saved = await api('/api/plan');
+  if (saved.durabilityUncertain) throw new Error('Độ bền tệp chưa rõ; cần người vận hành kiểm tra.');
+  serverLegacy = saved.migrationRequired ? saved.plan : null;
+  plan = saved.plan && !serverLegacy ? validatePlan(saved.plan) : blankPlan(); revision = saved.revision; initialized = !!saved.plan;
+  pending = null; selectedMonth = plan.startMonth; render();
+  warning(serverLegacy ? 'Máy chủ còn nguyên bản v1/v2. Chưa chuyển dữ liệu: xuất nguyên bản, xem ánh xạ và xác nhận trước. Kế hoạch trống dưới đây KHÔNG thay thế bản cũ.' : !initialized ? 'Máy chủ chưa có kế hoạch. Lưu thao tác đầu tiên sẽ khởi tạo; không tự lưu dữ liệu mẫu. Chưa có số dư là chưa biết.' : '');
+}
+async function commit(candidate, operation = 'edit', migrationConfirmed = false) {
+  if (busy || pending || (serverLegacy && !migrationConfirmed)) { toast('Hãy giải quyết bản chưa lưu hoặc chuyển nguyên bản trước.'); return false; }
+  const valid = validatePlan(candidate);
+  const draft = { candidate: valid, revision, operation: initialized ? operation : 'replace', migrationConfirmed, checked: false };
+  const body = JSON.stringify({ plan: valid, expectedRevision: revision, operation: draft.operation, confirmed: true, migrationConfirmed });
+  if (new TextEncoder().encode(body).length > MAX_BYTES) throw new Error('Yêu cầu vượt 1 MB.');
+  busy = true; renderStatus();
+  try {
+    const saved = await api('/api/plan', { method: 'PUT', body });
+    plan = validatePlan(saved.plan); revision = saved.revision; initialized = true; serverLegacy = null;
+    warning(''); toast('Đã lưu bền vững trên máy chủ laptop.'); return true;
+  } catch (e) {
+    pending = draft; plan = valid;
+    warning(e.status === 409 ? 'Xung đột: CHƯA LƯU. Giữ bản sửa để xuất; nạp bản máy chủ rồi kiểm tra và áp dụng lại bằng tay.' : 'CHƯA XÁC NHẬN LƯU. Xuất bản sửa và đọc lại trạng thái trước khi thử tiếp; không đóng trang. Độ bền chưa rõ cần người vận hành kiểm tra.');
+    return false;
+  } finally { busy = false; render(); }
+}
+function renderStatus() {
+  $('#save-status').textContent = pending ? `CHƯA LƯU · dựa trên phiên bản ${pending.revision}` : busy ? 'Đang lưu… chưa đóng trang.' : initialized ? `Đã lưu · phiên bản ${revision}${serverLegacy ? ' · nguyên bản chưa chuyển' : ''}` : 'Chưa khởi tạo kế hoạch máy chủ';
+  $('#save-recovery').hidden = !pending; $('#retry-button').hidden = !pending?.checked;
+  $('#legacy-button').hidden = !serverLegacy && !hasBrowserLegacy();
+  $$('[data-mutate], #settings-button').forEach(e => { e.disabled = blocked(); });
+  $$('#editor input, #editor select, #editor textarea, #editor button[type=submit]').forEach(e => { e.disabled = busy || !!pending || e.hasAttribute('data-locked') || (e.name === 'ack' && !migration?.downloaded); });
+  if (pending && $('#editor').open && $('#form-error')) { $('#form-error').hidden = false; $('#form-error').textContent = 'CHƯA LƯU. Dữ liệu biểu mẫu được giữ; đóng biểu mẫu để xuất bản sửa và đọc lại trạng thái.'; }
+}
+function hasBrowserLegacy() { try { return !!localStorage.getItem(KEY); } catch { return false; } }
+const button = (text, action, attrs = '', klass = '') => `<button class="button ${klass}" data-action="${action}" ${attrs}>${text}</button>`;
+const stat = (title, value, note, klass = '') => `<article class="stat ${klass}"><span class="stat-label">${h(title)}</span><strong class="stat-value${String(value).length > 16 ? ' long-value' : ''}">${h(value)}</strong><small>${h(note)}</small></article>`;
+const objectName = id => plan.objects.find(o => o.id === id)?.name ?? '';
+const objectLabel = o => `${TYPES[o.type][0]} ${TYPES[o.type][1]} · ${o.name} [${o.id.slice(-8)}]`;
+function monthOptions(value) { return range().map(m => `<option value="${m}" ${m === value ? 'selected' : ''}>${label(m)}</option>`).join(''); }
+function controls() {
+  return `<div class="controls"><label class="toggle"><input type="checkbox" id="include-tentative" ${tentative ? 'checked' : ''}>Tính cả khoản đang cân nhắc</label><label>Tháng xem <select class="select" id="view-month">${monthOptions(selectedMonth)}</select></label>${collapseTools()}</div>`;
+}
 function render() {
-  const data = months();
-  const income = data.reduce((n, m) => n + m.income, 0);
-  const expense = data.reduce((n, m) => n + m.expense, 0);
-  const final = data[11];
-  $('#plan-title').textContent = plan.name;
-  $('#year-label').textContent = plan.year;
-  $('#demo-banner').hidden = !plan.demo;
-  $('#summary').innerHTML = [
-    ['Tiền có sẵn đầu năm', money(plan.openingCash), 'Điểm bắt đầu của kế hoạch', 'opening'],
-    ['Tổng thu dự kiến', money(income), 'Tổng các khoản đang được tính', 'income'],
-    ['Tổng chi dự kiến', money(expense), final.incomplete ? 'Chưa gồm số tiền còn thiếu' : 'Gồm các khoản đã biết', 'expense'],
-    ['Còn lại cuối năm', money(final.closing), final.incomplete ? 'Ước tính chưa đủ dữ liệu' : 'Sau các khoản thu & chi', final.closing < 0 ? 'negative' : 'closing']
-  ].map(([title, value, caption, kind]) => `<article class="summary-card ${kind}"><p>${title}<span aria-hidden="true">${kind === 'income' ? '↙' : kind === 'expense' ? '↗' : '◌'}</span></p><strong>${value}</strong><small>${caption}</small></article>`).join('');
-  $('#empty-note').hidden = plan.items.length > 0;
-  $('#months').hidden = view !== 'year';
-  $('#all-items').hidden = view !== 'items';
-  $('#view-eyebrow').textContent = view === 'year' ? '12 THÁNG · MỘT BỨC TRANH' : `${plan.items.length} KHOẢN · CÓ THỂ CHỈNH SỬA`;
-  $('#section-title').innerHTML = `${view === 'year' ? 'Bản đồ tài chính' : 'Khoản thu & chi'} <span id="year-label">${plan.year}</span>`;
-  $$('.nav-button').forEach(button => {
-    const active = button.dataset.view === view;
-    button.classList.toggle('active', active);
-    if (active) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
+  if (!range().includes(selectedMonth)) selectedMonth = plan.startMonth;
+  $('#plan-title').textContent = `${plan.name} · ${label(plan.startMonth)}–${label(plan.endMonth)}`;
+  $$('[data-view]').forEach(e => { const active = e.dataset.view === view; e.classList.toggle('active', active); if (active) e.setAttribute('aria-current', 'page'); else e.removeAttribute('aria-current'); });
+  $('#workspace').innerHTML = view === 'calendar' ? calendarPage() : ['income', 'expense'].includes(view) ? itemPage(view) : accountsPage(view === 'debts');
+  renderStatus();
+}
+function heading(title, description, actions = '') {
+  return `<header class="page-heading"><div><div class="eyebrow">CÙNG HIỂU · CÙNG LÊN KẾ HOẠCH</div><h1>${h(title)}</h1><p>${h(description)}</p></div><div class="heading-actions">${actions}</div></header>`;
+}
+const sumItems = (items, month) => items.filter(i => occurs(i, month) && (i.status === 'confirmed' || tentative)).reduce((out, i) => {
+  const value = plannedAmount(i, month); if (value === null) out.missing++; else out.known += value; return out;
+}, { known: 0, missing: 0 });
+const sumText = out => `${money(out.known)}${out.missing ? ' + ? (chưa biết)' : ''}`;
+const flowText = (month, type) => sumText({ known: month[type], missing: month[`${type}Missing`] });
+function schedule(i) { const r = i.recurrence; return `${r.kind === 'once' ? 'Một lần' : r.everyMonths === 12 ? 'Hằng năm' : `Mỗi ${r.everyMonths} tháng`} · ${label(r.anchor)}–${label(r.end)}`; }
+function itemPage(kind) {
+  const expense = kind === 'expense', items = plan.items.filter(i => i.type === kind);
+  const objects = plan.objects.filter(o => expense || items.some(i => i.objectId === o.id));
+  return heading(TITLES[kind], expense ? 'Bắt đầu từ một người, nhóm hoặc danh mục. Nhớ điều cần chi, thêm chi tiết và lịch, rồi bổ sung tiền sau.' : 'Chỉ hiện đối tượng đã có khoản thu, kể cả chưa biết tiền. Mọi đối tượng dùng chung đều có thể chọn khi thêm thu.',
+    button('＋ Tạo đối tượng', 'object', 'data-mutate') + button(`＋ Thêm khoản ${expense ? 'chi' : 'thu'}`, 'item', `data-kind="${kind}" data-mutate`, 'primary')) +
+    `<div class="summary-grid">${stat(`Dự kiến ${expense ? 'chi' : 'thu'} · ${label(selectedMonth)}`, sumText(sumItems(items, selectedMonth)), 'Chỉ tính những lần thuộc tháng đang xem.', 'highlight')}${stat('Đối tượng hiển thị', objects.length, expense ? 'Kể cả đối tượng trống.' : 'Có khoản thu là hiển thị.')}${stat('Khoản đã lên kế hoạch', items.length, 'Không ghi số thực tế.')}${stat('Đầu vào số tiền', 'Mặc định × 1.000', '5 = 5.000 ₫ · 5tr = 5.000.000 ₫')}</div>` + controls() +
+    `<div class="steps"><span>1 · Tạo / chọn đối tượng</span><span>→ 2 · Mục đích</span><span>→ 3 · Chi tiết & lịch</span><span>→ 4 · Tiền nhập sau</span></div><section class="object-grid" aria-label="Danh sách đối tượng">${objects.map((o, index) => {
+      const rows = items.filter(i => i.objectId === o.id), key = `object:${kind}:${o.id}`, detailsId = `object-${kind}-${index}-details`;
+      return `<article class="object-card collapsible-object" data-object="${h(o.id)}"><header class="object-header"><div class="object-identity"><span class="object-icon ${o.type}" aria-hidden="true">${TYPES[o.type][0]}</span><div><h2 class="object-title">${collapseButton(key, o.name, detailsId)}</h2><small>${TYPES[o.type][1]} · Mã ${h(o.id.slice(-8))} · ${rows.length} khoản · dùng chung hai trang</small></div></div><div class="object-total"><strong>${h(sumText(sumItems(rows, selectedMonth)))}</strong><small>Dự kiến ${label(selectedMonth)}</small></div></header>
+      <div id="${detailsId}" ${hiddenGroup(key)}><div class="object-management">${button('Đổi tên / loại', 'object', `data-id="${h(o.id)}" data-mutate`, 'text small')}${button('Xóa đối tượng', 'delete-object', `data-id="${h(o.id)}" data-mutate`, 'text small danger')}</div>
+      ${rows.length ? `<div class="object-rows">${rows.map(i => {
+        const month = estimateMonth(i, selectedMonth);
+        const scopeNote = !range().some(m => occurs(i, m)) ? ' · Ngoài kỳ dự báo · lịch vẫn được lưu' : i.recurrence.anchor < plan.startMonth || i.recurrence.end > plan.endMonth ? ' · Chỉ tính phần lịch trong kỳ dự báo' : '';
+        return `<div class="detail-row"><div><strong>${h(i.name)}</strong><p>${h(i.description)}</p><small>${h(schedule(i))}${h(scopeNote)}${i.status === 'tentative' ? ' · Đang cân nhắc' : ''}</small></div><div class="row-actions">${button(h(money(plannedAmount(i, month))), 'item', `data-id="${h(i.id)}" data-month="${month}" data-mutate`, 'amount-button')}${button('Sửa chi tiết', 'item', `data-id="${h(i.id)}" data-mutate`, 'small')}${button('Xóa', 'delete-item', `data-id="${h(i.id)}" data-mutate aria-label="Xóa ${h(i.name)}"`, 'small danger')}</div></div>`;
+      }).join('')}</div>` : '<p class="empty">Chưa có khoản chi. Ghi điều cần chuẩn bị trước, chưa cần biết tiền.</p>'}
+      <footer class="object-footer">${button(`＋ Thêm chi tiết ${expense ? 'chi' : 'thu'}`, 'item', `data-kind="${kind}" data-object="${h(o.id)}" data-mutate`, 'text')}<span class="object-meta">Không ghi thực tế</span></footer></div></article>`;
+    }).join('') || '<p class="empty panel">Chưa có đối tượng phù hợp. Tạo đối tượng hoặc thêm khoản thu để bắt đầu.</p>'}</section>`;
+}
+function calendarPage() {
+  const data = results(), selected = data.find(m => m.month === selectedMonth);
+  return heading(TITLES.calendar, 'Số dư tài khoản + kế hoạch thu chi. Một dòng thời gian liên tục, không đặt lại khi sang năm.', button('＋ Khoản thu', 'item', 'data-kind="income" data-mutate') + button('＋ Khoản chi', 'item', 'data-kind="expense" data-mutate', 'primary')) +
+    `<div class="summary-grid">${stat(`Đầu tháng ${label(selectedMonth)}`, money(selected.opening), selected.openingIncomplete ? 'Phần đã biết · chưa đủ dữ liệu' : selected.reset ? 'Mốc số dư tài khoản, không phải thu.' : 'Chuyển từ cuối tháng trước.')}${stat('Thu dự kiến', flowText(selected, 'income'), 'Không phải thu nhập thực nhận.')}${stat('Chi dự kiến', flowText(selected, 'expense'), selected.expenseMissing ? `${selected.expenseMissing} khoản chưa biết số tiền.` : 'Toàn bộ kế hoạch tháng.')}${stat('Cuối tháng dự kiến', money(selected.closing), selected.incomplete ? 'Phần đã biết · chưa đủ dữ liệu' : selected.closing < 0 ? 'Số dư âm' : 'Ước tính theo tháng', selected.closing < 0 ? 'negative' : 'highlight')}</div>
+    <p class="info amber">Mỗi tháng có số dư mới sẽ đặt lại mốc gộp từ số dư gần nhất của từng tài khoản, kể cả ngày cũ. Vẫn tính toàn bộ kế hoạch tháng cập nhật; có thể trùng với chi tiêu đã nằm trong số dư. Đây là ước tính, không phải đối soát giao dịch.</p>${controls()}
+    <div class="controls"><h2>${data.length} tháng · ${label(plan.startMonth)} → ${label(plan.endMonth)}</h2><div class="segmented" role="group" aria-label="Kiểu hiển thị">${button('Bảng chi tiết', 'table', `aria-pressed="${table}"`)}${button('Thẻ tháng', 'cards', `aria-pressed="${!table}"`)}</div></div>${table ? forecastTable(data) : forecastCards(data)}`;
+}
+function forecastTable(data) {
+  const row = (title, key, klass = 'total-row') => `<tbody><tr class="${klass}"><th scope="row" class="row-label">${title}</th>${data.map(m => `<td>${h(['income', 'expense'].includes(key) ? flowText(m, key) : money(m[key]))}${key === 'opening' ? `<span class="sub">${m.reset ? 'Mốc tài khoản mới' : 'Chuyển từ tháng trước'}${m.openingIncomplete ? ' · chưa đủ dữ liệu' : ''}</span>` : key === 'closing' ? `<span class="sub">${m.incomplete ? 'Chưa đủ dữ liệu' : 'Đã biết'}${m.closing < 0 ? ' · Số dư âm' : ''}</span>` : ''}</td>`).join('')}</tr></tbody>`;
+  const section = type => {
+    const sectionId = `calendar-${type}-groups`, key = `section:${type}`;
+    const groups = plan.objects.filter(o => plan.items.some(i => i.objectId === o.id && i.type === type));
+    return `<tbody><tr class="section-row"><th scope="row" class="row-label">${collapseButton(key, type === 'income' ? 'THU DỰ KIẾN' : 'CHI DỰ KIẾN', sectionId)}</th>${data.map(() => '<td></td>').join('')}</tr></tbody><tbody id="${sectionId}" ${hiddenGroup(key)}>` + groups.map((o, index) => {
+      const items = plan.items.filter(i => i.objectId === o.id && i.type === type), groupKey = `calendar:${type}:${o.id}`;
+      const ids = items.map((_, n) => `calendar-${type}-${index}-detail-${n}`);
+      return `<tr class="group-row"><th scope="row" class="row-label">${collapseButton(groupKey, objectLabel(o), ids.join(' '))}</th>${data.map(m => `<td>${h(sumText(sumItems(items, m.month)))}</td>`).join('')}</tr>` + items.map((i, n) => `<tr id="${ids[n]}" ${hiddenGroup(groupKey)}><th scope="row" class="row-label detail-label">${h(i.name)}</th>${data.map(m => `<td>${!occurs(i, m.month) ? '—' : i.status === 'tentative' && !tentative ? 'Không tính' : button(h(money(plannedAmount(i, m.month))), 'item', `data-id="${h(i.id)}" data-month="${m.month}" data-mutate aria-label="${h(i.name)}: sửa từ ${label(m.month)}"`, 'cell-edit')}</td>`).join('')}</tr>`).join('');
+    }).join('') + '</tbody>';
+  };
+  return `<div class="panel"><div class="table-scroll" tabindex="0" role="region" aria-label="Bảng tháng, cuộn ngang để xem thêm"><table class="calendar-table"><thead><tr><th scope="col" class="row-label">Nội dung / đối tượng · VND</th>${data.map(m => `<th scope="col">${label(m.month)}</th>`).join('')}</tr></thead><tbody>
+    ${plan.accounts.map(a => `<tr><th scope="row" class="row-label">${h(a.name)} · Số dư tham chiếu</th>${data.map(m => { const s = latestSnapshot(plan.snapshots, a.id, m.month); return `<td>${s ? `${h(money(s.amount))}<span class="sub">${s.date}${s.date.slice(0, 7) < m.month ? ' · Mốc cũ' : ''}</span>` : 'Chưa biết'}</td>`; }).join('')}</tr>`).join('')}</tbody>
+    ${row('Số dư bắt đầu tính tháng', 'opening')}${section('income')}${row('Tổng thu dự kiến', 'income')}${section('expense')}${row('Tổng chi dự kiến', 'expense')}${row('Chênh lệch kế hoạch', 'net')}${row('Số dư dự kiến cuối tháng', 'closing', 'balance-row')}</table></div></div>`;
+}
+function forecastCards(data) {
+  let year = '';
+  return `<div class="month-card-grid">${data.map(m => {
+    const heading = year === m.month.slice(0, 4) ? '' : `<h3 class="year-heading">${year = m.month.slice(0, 4)}</h3>`;
+    return `${heading}<article class="month-card" data-month="${m.month}"><h3>${label(m.month)}</h3><strong class="closing">${h(money(m.closing))}</strong><dl><dt>Đầu tháng</dt><dd>${h(money(m.opening))}</dd><dt>Thu dự kiến</dt><dd>${h(flowText(m, 'income'))}</dd><dt>Chi dự kiến</dt><dd>${h(flowText(m, 'expense'))}</dd></dl><small>${m.reset ? 'Mốc tài khoản mới' : 'Chuyển từ tháng trước'}${m.incomplete ? ' · Chưa đủ dữ liệu' : ''}${m.closing < 0 ? ' · Số dư âm' : ''}</small>${button('Chi tiết tháng', 'month', `data-month="${m.month}"`, 'text')}</article>`;
+  }).join('')}</div>`;
+}
+function accountsPage(debt) {
+  const accounts = debt ? plan.debtAccounts : plan.accounts, snapshots = debt ? plan.debtSnapshots : plan.snapshots;
+  const group = (list, title) => `<h2>${title}</h2><div class="account-grid">${list.map(a => {
+    const s = latestSnapshot(snapshots, a.id, selectedMonth);
+    return `<article class="account-card"><div class="account-top"><h3>${h(a.name)}</h3></div><strong class="account-balance">${h(money(s?.amount ?? null))}</strong><span class="balance-date">${s ? `Số dư tại ${s.date}${s.date.slice(0, 7) < selectedMonth ? ' · Mốc cũ' : ''}` : 'Chưa có số dư phù hợp · Chưa biết'}</span>${button('＋ Nhập số dư theo ngày', 'snapshot', `data-id="${h(a.id)}" data-debt="${debt}" data-mutate`)}
+    ${button('Đổi tên', 'account', `data-id="${h(a.id)}" data-debt="${debt}" data-mutate`, 'text small')}${debt ? button(a.direction === 'payable' ? 'Lên kế hoạch trả nợ' : 'Lên kế hoạch thu hồi', 'debt-plan', `data-id="${h(a.id)}" data-mutate`, 'text') : ''}</article>`;
+  }).join('') || '<p class="empty">Chưa có tài khoản. Có thể tạo tên trước và nhập số dư sau.</p>'}</div>`;
+  return heading(TITLES[debt ? 'debts' : 'accounts'], debt ? 'Hai hướng riêng: mình nợ và người khác nợ mình. Số dư nợ không phải tiền sẵn có; kế hoạch trả / thu hồi không tự giảm dư nợ.' : 'Số dư có ngày tham chiếu, không phải sổ giao dịch. Số dư tháng sau không áp dụng ngược về tháng trước.', button(debt ? '＋ Tạo tài khoản công nợ' : '＋ Thêm tài khoản', 'account', `data-debt="${debt}" data-mutate`, 'primary')) +
+    `<div class="summary-grid">${debt ? stat('Mình đang nợ', sumText(debtTotal(plan, 'payable', selectedMonth)), 'Không trừ khỏi tiền sẵn có.', 'negative') + stat('Người khác nợ mình', sumText(debtTotal(plan, 'receivable', selectedMonth)), 'Chưa cộng vào tiền sẵn có.', 'highlight') : stat('Tổng số dư tham chiếu', sumText(cashBaseline(plan, selectedMonth)), 'Mỗi tài khoản chỉ lấy mốc mới nhất phù hợp.', 'highlight')}${stat('Tài khoản', accounts.length, 'Thiếu số dư là chưa biết, không phải 0.')}${stat('Ngày hôm nay', todayISO(), 'Asia/Ho_Chi_Minh · không nhập số dư tương lai.')}</div>${controls()}
+    ${debt ? group(accounts.filter(a => a.direction === 'payable'), 'Mình đang nợ') + group(accounts.filter(a => a.direction === 'receivable'), 'Người khác nợ mình') : group(accounts, 'Các tài khoản')}
+    <div class="section-heading"><h2>Lịch sử số dư theo ngày · ${snapshots.length} mốc</h2>${collapseButton(`history:${debt ? 'debts' : 'accounts'}`, 'lịch sử số dư', debt ? 'debt-history' : 'account-history', 'Chi tiết lịch sử')}</div><div id="${debt ? 'debt-history' : 'account-history'}" ${hiddenGroup(`history:${debt ? 'debts' : 'accounts'}`)} class="panel history-scroll" tabindex="0" role="region" aria-label="Lịch sử số dư"><table class="history-table"><thead><tr><th scope="col">Ngày</th><th scope="col">Tài khoản</th><th scope="col">Số dư</th><th scope="col">Sửa mốc</th></tr></thead><tbody>${[...snapshots].sort((a, b) => b.date.localeCompare(a.date)).map(s => `<tr><td>${s.date}</td><td>${h(accounts.find(a => a.id === s.accountId).name)}</td><td>${h(money(s.amount))}</td><td>${button('Sửa', 'snapshot', `data-id="${h(s.accountId)}" data-date="${s.date}" data-debt="${debt}" data-mutate`, 'small')}</td></tr>`).join('') || '<tr><td colspan="4">Chưa có mốc số dư.</td></tr>'}</tbody></table></div>`;
+}
+const field = (title, control, note = '', full = false) => `<label class="field ${full ? 'full' : ''}"><span>${title}</span>${control}${note ? `<small>${note}</small>` : ''}</label>`;
+const amountField = (value = null, required = false) => field(required ? 'Số dư' : 'Ước tính mỗi lần', `<input name="amount" type="text" inputmode="text" maxlength="60" data-amount ${required ? 'required' : ''} value="${h(formatAmountInput(value))}" placeholder="${required ? 'Nhập số dư' : 'Chưa biết — nhập sau'}"><output class="amount-preview" aria-live="polite"></output>`, 'Mặc định nghìn: 5 = 5.000 ₫; 5tr / 5M = 5 triệu; 5 trăm = 500.000 ₫. Ghi VND để nhập nguyên đồng.');
+function restoreFocus() {
+  if (!focusSource) return;
+  const { id, action, entity, month } = focusSource;
+  const candidate = id ? document.getElementById(id) : $$('[data-action]').find(e => e.dataset.action === action && e.dataset.id === entity && e.dataset.month === month);
+  (candidate ?? $('[data-view][aria-current]') ?? $('#settings-button')).focus();
+}
+function openEditor(title, subtitle, fields, handler, submit = 'Lưu', extra = '') {
+  const source = document.activeElement; focusSource = { id: source?.id, action: source?.dataset.action, entity: source?.dataset.id, month: source?.dataset.month };
+  submitEditor = handler;
+  $('#editor').innerHTML = `<form id="edit-form"><header class="dialog-head"><div><h2 id="editor-title">${h(title)}</h2><p>${h(subtitle)}</p></div><button class="icon-button" type="button" data-close aria-label="Đóng">×</button></header><div class="dialog-body"><p id="form-error" class="form-error" role="alert" hidden></p><div class="fields">${fields}</div></div><footer class="dialog-actions">${extra}<button class="button" type="button" data-close>Hủy</button>${handler ? `<button class="button primary" type="submit">${h(submit)}</button>` : ''}</footer></form>`;
+  $('#editor').showModal(); updatePreviews(); renderStatus();
+}
+function updatePreviews() {
+  $$('[data-amount]').forEach(input => {
+    const output = input.nextElementSibling;
+    try { output.textContent = `Giá trị: ${money(parseAmount(input.value, { required: input.required }))}`; input.setCustomValidity(''); }
+    catch (e) { output.textContent = e.message; input.setCustomValidity(e.message); }
   });
-  const peak = Math.max(...data.map(m => m.expense), 1);
-  $('#months').innerHTML = data.map(m => {
-    const special = m.entries.filter(e => e.repeat === 'once' && e.type === 'expense');
-    const status = m.closing < 0 ? 'negative' : m.expense > m.income ? 'costly' : 'steady';
-    const note = special[0] ? `${special[0].status === 'tentative' ? '≈ Cân nhắc: ' : ''}${special[0].name}` : (plan.items.length ? 'Nhịp chi tiêu thường kỳ' : 'Chưa có khoản thu chi');
-    return `<button class="month-card ${status}" data-month="${m.month}" aria-label="Tháng ${m.month}, số dư ${escape(money(m.closing))}${m.incomplete ? ', chưa đủ dữ liệu' : ''}">
-      <span class="month-top"><strong>Tháng ${String(m.month).padStart(2, '0')}</strong><span class="season-icon" aria-hidden="true">${['✿', '☀', '❧', '❋'][Math.floor((m.month - 1) / 3)]}</span></span>
-      <span class="month-caption">${m.closing < 0 ? '↓ Số dư âm' : m.expense > m.income ? '↗ Chi nhiều hơn thu' : 'Số dư cuối tháng'}</span>
-      <strong class="month-balance">${escape(short(m.closing))}<small> ₫</small></strong>
-      <meter class="spend-meter" min="0" max="${peak}" value="${m.expense}" aria-label="Chi tháng ${m.month}: ${escape(money(m.expense))}"></meter>
-      <span class="month-totals"><span>Thu <b>${escape(short(m.income))}</b></span><span>Chi <b>${escape(short(m.expense))}</b></span></span>
-      <span class="month-event">${escape(note)}${special.length > 1 ? ` +${special.length - 1}` : ''}</span>
-      ${m.incomplete ? '<span class="incomplete-label">◌ Chưa đủ dữ liệu</span>' : ''}
-    </button>`;
-  }).join('');
-  renderItems();
-  renderAttention(data);
-  if ($('#month-dialog').open) renderMonth();
 }
-
-function renderAttention(data) {
-  const peak = data.reduce((best, m) => m.expense > best.expense ? m : best, data[0]);
-  const firstNegative = data.find(m => m.closing < 0);
-  const missing = plan.items.filter(i => i.amount === null);
-  const tentative = plan.items.filter(i => i.status === 'tentative');
-  $('#insight').innerHTML = plan.items.length ? `<div class="insight-divider"></div><p class="insight-label">THÁNG CHI NHIỀU NHẤT</p><button class="insight-month" data-month="${peak.month}">Tháng ${peak.month} <span aria-hidden="true">↗</span></button><p class="insight-amount">${escape(money(peak.expense))} <span>đã biết</span></p>` : '<div class="insight-divider"></div><p>Thêm khoản thu chi đầu tiên để bắt đầu.</p>';
-  const alerts = [];
-  if (plan.openingCash === null) alerts.push('<button class="attention-row" data-setup><span class="alert-symbol">?</span><span><strong>Chưa biết tiền đầu năm</strong><small>Bổ sung để ước tính đầy đủ hơn.</small></span><span>↗</span></button>');
-  if (firstNegative) alerts.push(`<button class="attention-row" data-month="${firstNegative.month}"><span class="alert-symbol red">!</span><span><strong>Số dư âm từ tháng ${firstNegative.month}</strong><small>${escape(money(firstNegative.closing))} theo dữ liệu đã biết.</small></span><span>↗</span></button>`);
-  if (missing.length) alerts.push(`<button class="attention-row" data-edit="${escape(missing[0].id)}"><span class="alert-symbol">?</span><span><strong>${missing.length} khoản chưa có số tiền</strong><small>${escape(missing[0].name)}${missing.length > 1 ? ' và các khoản khác' : ''}</small></span><span>↗</span></button>`);
-  if (tentative.length) alerts.push(`<div class="attention-row"><span class="alert-symbol neutral">≈</span><span><strong>${tentative.length} khoản đang cân nhắc</strong><small>${$('#include-tentative').checked ? 'Đang tính vào ước tính.' : 'Chưa tính, trừ số thực tế đã ghi.'}</small></span></div>`);
-  $('#attention-count').textContent = alerts.length;
-  $('#attention').innerHTML = alerts.join('') || '<p class="muted small">Chưa có cảnh báo từ dữ liệu đã biết. Số dư tháng không thể hiện khả năng chi trả từng ngày.</p>';
+async function saveAndClose(next, operation = 'edit', migrated = false) { if (await commit(next, operation, migrated)) $('#editor').close(); }
+function objectDialog(id) {
+  const object = plan.objects.find(o => o.id === id);
+  openEditor(object ? 'Đổi đối tượng dùng chung' : 'Tạo một đối tượng', 'Loại chỉ đổi biểu tượng, không thay phép tính hoặc quyền truy cập.',
+    field('Tên hiển thị', `<input name="name" maxlength="80" required value="${h(object?.name)}">`, 'Tên trùng không tự gộp; dùng mã để phân biệt.', true) + field('Loại', `<select name="objectType">${Object.entries(TYPES).map(([key, [icon, text]]) => `<option value="${key}" ${key === object?.type ? 'selected' : ''}>${icon} ${text}</option>`).join('')}</select>`, '', true),
+    async f => { const next = structuredClone(plan), value = { id: id || crypto.randomUUID(), name: f.name.value, type: f.objectType.value }; if (object) next.objects[next.objects.findIndex(o => o.id === id)] = value; else next.objects.push(value); await saveAndClose(next); });
 }
-
-function renderItems() {
-  $('#all-items').innerHTML = plan.items.length ? `<div class="items-heading"><span>Khoản dự kiến</span><span>Số tiền mỗi lần</span></div>${plan.items.map(i => `<button class="plan-item" data-edit="${escape(i.id)}"><span class="item-symbol ${i.type}">${i.type === 'income' ? '↙' : '↗'}</span><span class="item-description"><strong>${escape(i.name)}</strong><small>${escape(i.category)} · ${i.repeat === 'monthly' ? `Hằng tháng, T${i.start}–T${i.end}` : `Tháng ${i.start}`} ${i.status === 'tentative' ? '· Đang cân nhắc' : ''}</small></span><span class="item-amount">${escape(money(i.amount))}<small>Chỉnh sửa ↗</small></span></button>`).join('')}` : '<p class="empty-state">Kế hoạch còn trống. Bắt đầu bằng một khoản thu hoặc chi.</p>';
+function itemDialog({ id, kind = 'expense', objectId, month = selectedMonth, suggestion = '' } = {}) {
+  if (!plan.objects.length) { objectDialog(); toast('Tạo đối tượng trước, sau đó thêm chi tiết.'); return; }
+  const item = plan.items.find(i => i.id === id); if (item) kind = item.type;
+  const effective = item ? estimateMonth(item, month) : month;
+  const r = item?.recurrence ?? { kind: 'once', anchor: month, end: month, everyMonths: 1 };
+  openEditor(`${item ? 'Chỉnh' : 'Thêm'} khoản ${kind === 'income' ? 'thu' : 'chi'}`, 'Chọn đối tượng → mục đích → chi tiết & lịch → số tiền sau. Không ghi thực tế.',
+    field('Đối tượng dùng chung', `<select name="objectId">${plan.objects.map(o => `<option value="${h(o.id)}" ${o.id === (item?.objectId ?? objectId) ? 'selected' : ''}>${h(objectLabel(o))}</option>`).join('')}</select>`, '', true) +
+    field('Tên khoản / mục đích', `<input name="name" required maxlength="100" value="${h(item?.name ?? suggestion)}">`, '', true) +
+    field('Chi tiết', `<textarea name="description" maxlength="500">${h(item?.description)}</textarea>`, '', true) + amountField(item ? plannedAmount(item, effective) : null) +
+    field('Mức xác định', `<select name="status"><option value="confirmed">Đưa vào kế hoạch</option><option value="tentative" ${item?.status === 'tentative' ? 'selected' : ''}>Đang cân nhắc</option></select>`) +
+    field('Lặp lại', `<select name="repeat"><option value="once">Một lần</option><option value="monthly" ${r.kind === 'interval' && r.everyMonths === 1 ? 'selected' : ''}>Hằng tháng</option><option value="interval" ${r.kind === 'interval' && ![1, 12].includes(r.everyMonths) ? 'selected' : ''}>Mỗi N tháng</option><option value="yearly" ${r.kind === 'interval' && r.everyMonths === 12 ? 'selected' : ''}>Hằng năm</option></select>`) +
+    field('Khoảng lặp N', `<input name="everyMonths" type="number" min="1" max="120" step="1" value="${r.everyMonths}">`, 'Chỉ dùng khi chọn Mỗi N tháng.') +
+    field('Tháng bắt đầu', `<input name="start" type="month" required value="${r.anchor}" min="2000-01" max="2100-12">`, 'Lịch được lưu độc lập với kỳ dự báo.') +
+    field('Kết thúc (lịch lặp)', `<input name="end" type="month" value="${r.end}" min="2000-01" max="2100-12">`, 'Có thể ngoài kỳ dự báo. Chỉ tháng giao nhau được tính; không tự mở rộng kỳ.') +
+    (item ? field('Tháng hiệu lực số dự kiến', `<input name="effectiveMonth" type="month" required value="${effective}" min="${r.anchor}" max="${r.end}">`, 'Giữ các mốc sau đó; mọi thay đổi số tiền đều xem trước và xác nhận.', true) : ''),
+    async f => {
+      const next = structuredClone(plan), repeat = f.repeat.value, n = repeat === 'yearly' ? 12 : repeat === 'interval' ? Number(f.everyMonths.value) : 1;
+      const value = parseAmount(f.amount.value), entry = { id: id || crypto.randomUUID(), objectId: f.objectId.value, type: kind, name: f.name.value, description: f.description.value, status: f.status.value,
+        amount: item ? item.amount : value, amountChanges: item?.amountChanges ?? [], recurrence: { kind: repeat === 'once' ? 'once' : 'interval', anchor: f.start.value, end: repeat === 'once' ? f.start.value : f.end.value, everyMonths: n } };
+      if (item) next.items[next.items.findIndex(i => i.id === id)] = entry; else next.items.push(entry);
+      let valid = validatePlan(next);
+      if (item) {
+        if (!occurs(entry, f.effectiveMonth.value)) throw new Error('Tháng hiệu lực phải thuộc lịch.');
+        if (value !== plannedAmount(item, f.effectiveMonth.value)) {
+          valid = reviseEstimate(valid, id, f.effectiveMonth.value, value);
+          const later = item.amountChanges.filter(c => c.month > f.effectiveMonth.value).map(c => label(c.month)).join(', ');
+          confirmChange('Xem trước đổi dự kiến', `${entry.name}: ${money(value)} từ ${label(f.effectiveMonth.value)}. Giữ dự kiến trước đó; thay mốc cùng tháng nếu có. ${later ? `Giữ các mốc muộn hơn: ${later}.` : 'Không có mốc muộn hơn.'}`, () => saveAndClose(valid)); return;
+        }
+      }
+      if (item && JSON.stringify(item.recurrence) !== JSON.stringify(entry.recurrence)) confirmChange('Xác nhận đổi lịch cả chuỗi', 'Đổi lịch ảnh hưởng mọi lần dự kiến trong chuỗi. Không bỏ các mốc dự kiến đã lưu. Hãy kiểm tra trước khi lưu.', () => saveAndClose(valid));
+      else await saveAndClose(valid);
+    });
 }
-
-function openMonth(month) {
-  selectedMonth = month;
-  renderMonth();
-  show('#month-dialog');
+function accountDialog(id, debt = false) {
+  const source = debt ? plan.debtAccounts : plan.accounts, account = source.find(a => a.id === id);
+  openEditor(account ? 'Đổi tên tài khoản' : debt ? 'Tạo tài khoản công nợ' : 'Thêm tài khoản tiền', 'Tài khoản không phải người đăng nhập. Lịch sử số dư được giữ; không có xóa tài khoản có lịch sử.',
+    field('Tên tài khoản', `<input name="name" required maxlength="80" value="${h(account?.name)}">`, '', true) + (debt ? field('Hướng công nợ', `<select name="direction" ${account ? 'disabled data-locked' : ''}><option value="payable">Mình nợ</option><option value="receivable" ${account?.direction === 'receivable' ? 'selected' : ''}>Người khác nợ mình</option></select>`, 'Không bù trừ vào số dư tiền.', true) : ''),
+    async f => { const next = structuredClone(plan), list = debt ? next.debtAccounts : next.accounts, value = { id: id || crypto.randomUUID(), name: f.name.value, ...(debt ? { direction: account?.direction ?? f.direction.value } : {}) }; if (account) list[list.findIndex(a => a.id === id)] = value; else list.push(value); await saveAndClose(next); });
 }
-
-function renderMonth() {
-  const m = months()[selectedMonth - 1];
-  $('#month-title').textContent = `Tháng ${selectedMonth} · ${plan.year}`;
-  $('#month-eyebrow').textContent = `TIỀN ĐẦU THÁNG: ${money(m.opening)}${m.incomplete ? ' · ƯỚC TÍNH CHƯA ĐỦ' : ''}`;
-  $('#month-content').innerHTML = `<div class="month-summary"><div><small>Thu được tính</small><strong>${escape(money(m.income))}</strong></div><div><small>Chi được tính</small><strong>${escape(money(m.expense))}</strong></div><div class="${m.closing < 0 ? 'red-text' : ''}"><small>Còn cuối tháng</small><strong>${escape(money(m.closing))}</strong></div></div>
-    ${m.incomplete ? '<p class="warning">Chưa đủ dữ liệu trong tháng này hoặc các tháng trước. Số dư chỉ tính từ các khoản đã biết, không coi tiền còn thiếu là 0 ₫.</p>' : ''}
-    ${m.closing < 0 ? '<p class="warning danger-warning">Số dư dự kiến âm. Hãy xem lại thời điểm và quy mô các khoản thu chi.</p>' : ''}
-    <div class="month-entries">${m.entries.length ? m.entries.map(i => `<article class="month-entry ${!i.included ? 'excluded' : ''}"><div class="entry-top"><span class="item-symbol ${i.type}">${i.type === 'income' ? '↙' : '↗'}</span><div class="item-description"><strong>${escape(i.name)}</strong><small>${escape(i.category)} · ${i.repeat === 'monthly' ? 'Hằng tháng' : 'Một lần'}${i.status === 'tentative' ? ` · Đang cân nhắc${i.included ? ' (đang tính)' : ' (chưa tính)'}` : ''}</small></div><button class="text-button" data-edit="${escape(i.id)}">Sửa</button></div><div class="entry-amounts"><span>Dự kiến <strong>${escape(money(i.amount))}</strong></span><span>Thực tế <strong>${i.actual === undefined ? 'Chưa ghi' : escape(money(i.actual))}</strong></span>${i.actual !== undefined && i.amount !== null ? `<span>Chênh lệch <strong>${i.actual - i.amount > 0 ? '+' : ''}${escape(money(i.actual - i.amount))}</strong></span>` : ''}<button class="text-button" data-actual="${escape(i.id)}">${i.actual === undefined ? 'Ghi thực tế' : 'Sửa thực tế'} ↗</button></div></article>`).join('') : '<p class="empty-state">Tháng này chưa có khoản thu chi. Bạn có thể thêm ngay bên dưới.</p>'}</div><p class="field-help">Số thực tế thay cho dự kiến, không cộng hai lần. Tiền cuối tháng được chuyển sang tháng sau. Ước tính này không kiểm tra thứ tự thu chi từng ngày.</p>`;
-  $('#previous-month').disabled = selectedMonth === 1;
-  $('#next-month').disabled = selectedMonth === 12;
+function snapshotDialog(accountId, debt = false, date) {
+  const snapshots = debt ? plan.debtSnapshots : plan.snapshots, accounts = debt ? plan.debtAccounts : plan.accounts;
+  const account = accounts.find(a => a.id === accountId); if (!account) return;
+  const existing = snapshots.find(s => s.accountId === accountId && s.date === date);
+  openEditor('Số dư theo ngày', account.name,
+    field('Ngày tham chiếu', `<input name="date" type="date" min="2000-01-01" max="${todayISO()}" required value="${date ?? todayISO()}" ${existing ? 'readonly' : ''}>`, 'Chỉ hôm nay / lịch sử, không phải ngày dự kiến.', true) + amountField(existing?.amount ?? null, true),
+    async f => {
+      const snapshot = { id: crypto.randomUUID(), accountId, date: f.date.value, amount: parseAmount(f.amount.value, { required: true }) };
+      const same = snapshots.find(s => s.accountId === accountId && s.date === snapshot.date);
+      const next = setSnapshot(plan, snapshot, { debt, confirmed: !!same });
+      if (same) confirmChange('Thay số dư cùng ngày?', `${account.name} · ${snapshot.date}: ${money(same.amount)} → ${money(snapshot.amount)}. Giữ mã mốc; số dư ngày cũ không bị cộng dồn.`, () => saveAndClose(next));
+      else await saveAndClose(next);
+    });
 }
-
-function openSetup(isNew = false) {
-  setupNew = isNew;
+function setupDialog(isNew = false) {
   const source = isNew ? blankPlan() : plan;
-  const f = $('#setup-form').elements;
-  f.name.value = source.name; f.year.value = source.year; f.openingCash.value = source.openingCash ?? '';
-  $('#setup-new-warning').hidden = !isNew;
-  $('#setup-title').textContent = isNew ? 'Bắt đầu kế hoạch riêng' : 'Chỉnh kế hoạch';
-  $('#setup-error').textContent = '';
-  show('#setup-dialog');
+  openEditor(isNew ? 'Kế hoạch trống mới' : 'Chỉnh kế hoạch', 'Kỳ dự báo 1–120 tháng trong 2000–2100. Giữ nguyên toàn bộ lịch thu chi, kể cả ngoài kỳ; chỉ tính các tháng giao nhau. Không dùng số dư hôm nay làm tiền lịch sử.',
+    field('Tên kế hoạch', `<input name="name" required maxlength="80" value="${h(source.name)}">`, '', true) +
+    field('Tháng đầu', `<input name="startMonth" type="month" min="2000-01" max="2100-12" required value="${source.startMonth}">`) +
+    field('Tháng cuối', `<input name="endMonth" type="month" min="2000-01" max="2100-12" required value="${source.endMonth}">`),
+    async f => {
+      const next = changeWindow({ ...source, name: f.name.value }, f.startMonth.value, f.endMonth.value);
+      if (isNew || next.startMonth !== plan.startMonth) confirmChange(isNew ? 'Thay toàn bộ bằng kế hoạch trống?' : 'Xem trước đổi tháng đầu', 'Số dư mở kỳ lấy từ mốc tài khoản áp dụng theo ngày, không tự tạo tiền đầu kỳ. Kỳ mới không xóa lịch sử. Hãy xuất bản sao trước khi thay toàn bộ.', () => saveAndClose(next, isNew ? 'replace' : 'edit'));
+      else await saveAndClose(next);
+    }, 'Lưu', !isNew ? button('Kế hoạch trống mới…', 'new-plan', 'type="button"', 'danger') : '');
 }
-
-function syncRecurrence() {
-  $('#end-month-label').hidden = $('#item-form').elements.repeat.value === 'once';
+function monthDialog(month) {
+  selectedMonth = month; const m = results().find(m => m.month === month);
+  openEditor(`Tháng ${label(month)}`, `${m.reset ? 'Mốc tài khoản' : 'Chuyển từ tháng trước'} · Đầu ${money(m.opening)} · Cuối ${money(m.closing)}${m.incomplete ? ' · Chưa đủ dữ liệu' : ''}${m.closing < 0 ? ' · Số dư âm' : ''}`,
+    `<div class="field full"><h3>Thu dự kiến · ${h(flowText(m, 'income'))}</h3>${m.entries.filter(i => i.type === 'income').map(i => `<p>${h(objectName(i.objectId))} · ${h(i.name)}: ${h(money(i.planned))}${!i.included ? ' · Không tính' : ''}</p>`).join('') || '<p>Chưa có khoản thu.</p>'}<h3>Chi dự kiến · ${h(flowText(m, 'expense'))}</h3>${m.entries.filter(i => i.type === 'expense').map(i => `<p>${h(objectName(i.objectId))} · ${h(i.name)}: ${h(money(i.planned))}${!i.included ? ' · Không tính' : ''}</p>`).join('') || '<p>Chưa có khoản chi.</p>'}<h3>Số dư tham chiếu</h3>${m.references.map(a => `<p>${h(a.name)}: ${h(money(a.snapshot?.amount ?? null))} · ${a.snapshot?.date ?? 'Chưa có mốc'}</p>`).join('')}</div>`, null);
 }
-
-function openItem(id = null, month = 1) {
-  editingId = id;
-  const i = id ? plan.items.find(i => i.id === id) : { name: '', type: 'expense', status: 'confirmed', amount: null, repeat: 'once', start: month, end: month, category: 'Sinh hoạt' };
-  const f = $('#item-form').elements;
-  for (const key of ['name', 'type', 'status', 'repeat', 'start', 'end', 'category']) f[key].value = i[key];
-  if (!f.category.value) f.category.value = 'Khác';
-  f.amount.value = i.amount ?? '';
-  $('#item-title').textContent = id ? 'Chỉnh khoản thu / chi' : 'Thêm khoản thu / chi';
-  $('#delete-item').hidden = !id;
-  $('#item-error').textContent = '';
-  syncRecurrence();
-  show('#item-dialog');
+function prepareMigration(raw, fromServer = false) {
+  const source = JSON.parse(raw), next = convertLegacy(source, { confirmed: true });
+  migration = { raw, next, fromServer, downloaded: false };
+  openEditor('Chuyển nguyên bản v1/v2', 'Không tự chuyển, không dùng lại số thực tế hay tự tạo số dư tài khoản.',
+    `<div class="field full"><p>Giữ năm-tháng ${label(next.startMonth)}–${label(next.endMonth)}, ${next.items.length} kế hoạch. Số thực tế và tiền đầu kỳ cũ chỉ nằm trong nguyên bản; KHÔNG tham gia dự báo mới. Số dư mới là chưa biết cho đến khi nhập mốc có ngày.</p><h3>Ánh xạ đối tượng (xem mã để phân biệt)</h3><ul>${next.objects.map(o => `<li>${h(objectLabel(o))} → ${h(next.items.find(i => i.objectId === o.id)?.name)}</li>`).join('')}</ul>${button('Tải nguyên bản trước ↓', 'download-original', 'type="button"')}<label class="toggle"><input name="ack" type="checkbox" required disabled>Tôi đã lưu nguyên bản; đồng ý bỏ số thực tế khỏi kế hoạch hoạt động và dùng ánh xạ trên.</label><p>Khóa trình duyệt không bị xóa. Với bản máy chủ cũ, máy chủ cũng lưu nguyên bản riêng trước khi thay.</p></div>`,
+    async () => { if (!migration.downloaded) throw new Error('Tải nguyên bản trước khi xác nhận.'); confirmChange('Thay kế hoạch bằng bản chuyển?', 'Hãy giữ nguyên bản xuất ở nơi an toàn. Việc chuyển chỉ giữ kế hoạch, năm-tháng, mã và các mốc ước tính; không chuyển thực tế hoặc suy đoán số dư tiền.', () => saveAndClose(migration.next, 'replace', !!serverLegacy)); }, 'Xem trước chuyển');
 }
-
-function openActual(id) {
-  actualId = id;
-  const i = plan.items.find(i => i.id === id);
-  $('#actual-context').textContent = `${i.name} · Tháng ${selectedMonth} · Dự kiến ${money(i.amount)}`;
-  $('#actual-form').elements.actual.value = i.actuals[selectedMonth] ?? '';
-  $('#actual-error').textContent = '';
-  show('#actual-dialog');
+function helpDialog() {
+  openEditor('Hướng dẫn & khôi phục', 'Ước tính theo tháng, không phải kế toán.', `<div class="field full"><h3>Số tiền và số dư</h3><p>Số trống là chưa biết; 0 là đã biết. Nhập 5 nghĩa là 5.000 ₫, nhập 5000 VND là 5.000 ₫. Xem giá trị trước khi lưu. Số dư tài khoản dùng ngày Asia/Ho_Chi_Minh. Mốc mới đặt lại cơ sở gộp; không có mốc mới thì chuyển tiếp. Luôn tính cả kế hoạch tháng cập nhật.</p><h3>Thu chi và công nợ</h3><p>Đối tượng dùng chung, chi tiết thu/chi riêng. Lưu toàn bộ lịch thu/chi, kể cả trước hoặc sau kỳ dự báo; chỉ tính các tháng giao nhau. Đổi kỳ dự báo không cắt hay kéo dài lịch. Chỉnh ước tính từ tháng được chọn và giữ các mốc khác. Công nợ tách khỏi tiền mặt; kế hoạch trả nợ là chi, thu hồi là thu. Không tự giảm dư nợ, không ghi thực tế, tính lãi hoặc ngân hàng.</p><h3>Lưu & khôi phục</h3><p>Một JSON riêng tư trên laptop; mọi thành viên sửa như nhau. Laptop phải chạy và truy cập được qua Tailscale HTTPS riêng tư. Không có sao lưu tự động, không mã hóa ổ đĩa; laptop không phải bản sao lưu. Xuất JSON riêng, giữ an toàn.</p><p>Xung đột/lỗi lưu giữ bản sửa chưa lưu. Xuất trước khi đóng; đọc lại trạng thái trước khi thử lại. Nạp bản máy chủ rồi áp dụng lại bằng tay, không tự gộp. Tệp hỏng/độ bền chưa rõ cần người vận hành; không tự đặt lại hoặc chiếm khóa.</p>${button('Thay bằng mẫu tổng hợp…', 'demo', 'type="button" data-mutate')}</div>`, null);
 }
-
-$('#setup-form').addEventListener('submit', event => {
-  event.preventDefault();
+$('#editor').addEventListener('input', updatePreviews);
+$('#editor').addEventListener('close', restoreFocus);
+$('#editor').addEventListener('submit', async e => {
+  e.preventDefault(); if (busy || pending) return;
+  try { await submitEditor?.(e.target.elements); }
+  catch (error) { $('#form-error').textContent = error.message; $('#form-error').hidden = false; }
+});
+$('#confirm-form').addEventListener('submit', async e => { e.preventDefault(); const action = confirmAction; confirmAction = null; $('#confirm-dialog').close(); try { await action?.(); } catch (error) { if ($('#editor').open) { $('#form-error').textContent = error.message; $('#form-error').hidden = false; } else toast(error.message); } });
+$('#confirm-dialog').addEventListener('close', () => { confirmAction = null; });
+$('#login-form').addEventListener('submit', async e => {
+  e.preventDefault(); const f = e.target.elements; $('#login-error').hidden = true;
   try {
-    const f = event.currentTarget.elements;
-    const next = setupNew ? blankPlan() : structuredClone(plan);
-    next.name = f.name.value; next.year = Number(f.year.value); next.openingCash = amountInput(f.openingCash.value);
-    commit(next);
-    $('#setup-dialog').close();
-  } catch (error) { $('#setup-error').textContent = error.message; }
+    csrf = (await api('/api/login', { method: 'POST', body: JSON.stringify({ passphrase: f.passphrase.value }) })).csrf;
+    f.passphrase.value = ''; if (!pending) await load(); else render(); authenticated(true);
+  } catch (error) { $('#login-error').hidden = false; $('#login-error').textContent = error.status === 429 ? 'Quá nhiều lần thử; chờ 15 phút.' : 'Không đăng nhập/đọc được. Kiểm tra mật khẩu, máy chủ và kết nối riêng tư.'; }
 });
-
-$('#item-form').addEventListener('submit', event => {
-  event.preventDefault();
+$('#settings-button').addEventListener('click', () => setupDialog());
+$('#help-button').addEventListener('click', helpDialog);
+$('#import-button').addEventListener('click', () => { if (blocked()) return toast('Giải quyết bản chưa lưu / nguyên bản trước.'); $('#import-file').click(); });
+$('#import-file').addEventListener('change', async e => {
+  const file = e.target.files[0]; e.target.value = ''; if (!file || blocked()) return;
   try {
-    const f = event.currentTarget.elements;
-    const next = structuredClone(plan);
-    const previous = next.items.find(i => i.id === editingId);
-    const start = Number(f.start.value);
-    const end = f.repeat.value === 'once' ? start : Number(f.end.value);
-    if (end < start) throw new Error('Tháng kết thúc phải bằng hoặc sau tháng bắt đầu.');
-    const actuals = previous?.actuals ?? {};
-    if (Object.keys(actuals).some(m => Number(m) < start || Number(m) > end)) throw new Error('Khoảng tháng mới loại bỏ số thực tế đã ghi. Hãy xóa số thực tế liên quan trong chi tiết tháng trước khi đổi khoảng.');
-    const item = { id: editingId || crypto.randomUUID(), name: f.name.value, type: f.type.value, status: f.status.value,
-      amount: amountInput(f.amount.value), repeat: f.repeat.value, start, end, category: f.category.value, actuals };
-    if (editingId) next.items[next.items.findIndex(i => i.id === editingId)] = item;
-    else next.items.push(item);
-    commit(next);
-    $('#item-dialog').close();
-  } catch (error) { $('#item-error').textContent = error.message; }
+    if (file.size > MAX_BYTES) throw new Error('Tệp vượt 1 MB.');
+    const raw = await file.text(), value = JSON.parse(raw);
+    if ([1, 2].includes(value?.version)) { prepareMigration(raw); return; }
+    const next = validatePlan(value);
+    confirmChange('Thay kế hoạch từ bản nhập?', `${next.name} · ${label(next.startMonth)}–${label(next.endMonth)} · ${next.items.length} khoản. Hãy xuất bản hiện tại trước.`, () => commit(next, 'replace'));
+  } catch (error) { toast(error instanceof SyntaxError ? 'JSON không hợp lệ; giữ nguyên dữ liệu.' : error.message); }
 });
-
-$('#actual-form').addEventListener('submit', event => {
-  event.preventDefault();
+$('#legacy-button').addEventListener('click', () => { if (busy || pending) return; try { const raw = serverLegacy ? JSON.stringify(serverLegacy, null, 2) : localStorage.getItem(KEY); if (raw) prepareMigration(raw, !!serverLegacy); } catch (error) { toast(error.message); } });
+$('#export-button').addEventListener('click', async () => {
+  try { const source = pending ? pending.candidate : await api('/api/export'); download(JSON.stringify(source ?? plan, null, 2), `money-seasons-${pending ? 'UNSAVED' : 'original-plan'}.json`); toast('Bản xuất không mã hóa; giữ ở nơi an toàn.'); } catch { toast('Không xuất được. Kiểm tra đăng nhập / kết nối.'); }
+});
+$('#reconcile-button').addEventListener('click', async () => {
+  if (!pending) return;
   try {
-    const next = structuredClone(plan);
-    const item = next.items.find(i => i.id === actualId);
-    const actual = amountInput(event.currentTarget.elements.actual.value);
-    if (actual === null) delete item.actuals[selectedMonth]; else item.actuals[selectedMonth] = actual;
-    commit(next);
-    $('#actual-dialog').close();
-  } catch (error) { $('#actual-error').textContent = error.message; }
+    const saved = await api('/api/plan');
+    if (saved.durabilityUncertain) { pending.checked = false; warning('Độ bền CHƯA XÁC NHẬN. Xuất bản sửa; cần người vận hành kiểm tra và khởi động lại.'); }
+    else if (JSON.stringify(saved.plan) === JSON.stringify(pending.candidate)) { revision = saved.revision; pending = null; initialized = true; serverLegacy = null; warning('Đã đọc lại: máy chủ giữ đúng bản sửa.'); }
+    else if (saved.revision === pending.revision) { pending.checked = true; warning('Máy chủ vẫn giữ bản trước. Có thể thử lưu lại sau khi đọc lại, với kiểm tra phiên bản.'); }
+    else { pending.checked = false; warning(`Máy chủ có phiên bản ${saved.revision}. Xuất bản sửa, nạp bản máy chủ và áp dụng lại bằng tay.`); }
+    renderStatus();
+  } catch { toast('Chưa đọc lại được. Bản sửa vẫn giữ.'); }
 });
-
-$('#confirm-form').addEventListener('submit', event => {
-  event.preventDefault();
-  const action = confirmAction;
-  confirmAction = undefined;
-  $('#confirm-dialog').close();
-  action?.();
-});
-$('#confirm-dialog').addEventListener('close', () => { confirmAction = undefined; });
-
-$('#delete-item').addEventListener('click', () => {
-  const id = editingId;
-  const i = plan.items.find(i => i.id === id);
-  confirmChange('Xóa khoản thu / chi?', `Xóa “${i.name}” khỏi toàn bộ kế hoạch, gồm mọi lần lặp và số thực tế đã ghi?`, () => {
-    const next = structuredClone(plan);
-    next.items = next.items.filter(i => i.id !== id);
-    commit(next, 'Đã xóa khoản khỏi kế hoạch.');
-    $('#item-dialog').close();
-  });
-});
-
-$('#export-button').addEventListener('click', () => {
-  const blob = new Blob([JSON.stringify(plan, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url; link.download = `money-seasons-${plan.year}.json`;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-  toast('Đã tạo tệp xuất không mã hóa. Hãy giữ tệp ở nơi an toàn.');
-});
-
-$('#import-button').addEventListener('click', () => $('#import-file').click());
-$('#import-file').addEventListener('change', async event => {
-  const file = event.currentTarget.files[0];
-  event.currentTarget.value = '';
-  if (!file) return;
-  try {
-    if (file.size > 1_000_000) throw new Error('Tệp quá lớn. Bản thử nghiệm hỗ trợ tệp JSON tối đa 1 MB.');
-    const next = validatePlan(JSON.parse(await file.text()));
-    forecast(next, true);
-    confirmChange('Thay kế hoạch bằng bản nhập?', `Mở “${next.name}” (${next.year}, ${next.items.length} khoản). Kế hoạch hiện tại sẽ bị thay thế.`, () => commit(next, 'Đã nhập và lưu kế hoạch.'));
-  } catch (error) {
-    toast(error instanceof SyntaxError ? 'Tệp JSON bị lỗi. Kế hoạch hiện tại được giữ nguyên.' : error.message);
+$('#retry-button').addEventListener('click', async () => { if (!pending?.checked) return; const draft = pending; pending = null; await commit(draft.candidate, draft.operation, draft.migrationConfirmed); });
+$('#reload-button').addEventListener('click', () => confirmChange('Nạp bản máy chủ?', 'Bản chưa lưu sẽ rời bộ nhớ. Xuất trước. Ô biểu mẫu được giữ để kiểm tra/áp dụng lại bằng tay.', load));
+$('#logout-button').addEventListener('click', () => confirmChange('Đăng xuất?', 'Bản chưa lưu sẽ rời bộ nhớ. Hãy xuất trước.', async () => { await api('/api/logout', { method: 'POST', body: '{}' }); location.reload(); }));
+document.addEventListener('change', e => {
+  if (e.target.id === 'include-tentative') { tentative = e.target.checked; render(); }
+  if (e.target.id === 'view-month') { selectedMonth = e.target.value; render(); }
+  // Effective-month changes load that occurrence's estimate, not a different month's amount.
+  if (e.target.name === 'effectiveMonth' && $('#edit-form [name=amount]')) {
+    const id = $('#edit-form').dataset.itemId, item = plan.items.find(i => i.id === id);
+    if (item && occurs(item, e.target.value)) { $('#edit-form [name=amount]').value = formatAmountInput(plannedAmount(item, e.target.value)); updatePreviews(); }
   }
 });
-
-$('#restore-demo').addEventListener('click', () => confirmChange('Khôi phục dữ liệu mẫu?', 'Kế hoạch hiện tại sẽ được thay bằng một năm minh họa. Hãy xuất bản sao trước nếu cần.', () => {
-  commit(demoPlan(), 'Đã khôi phục dữ liệu mẫu.');
-  $('#help-dialog').close();
-}));
-
-$('#new-plan').addEventListener('click', () => openSetup(true));
-$('#settings-button').addEventListener('click', () => openSetup());
-$('#help-button').addEventListener('click', () => show('#help-dialog'));
-$('#add-button').addEventListener('click', () => openItem());
-$('#add-in-month').addEventListener('click', () => openItem(null, selectedMonth));
-$('#previous-month').addEventListener('click', () => openMonth(selectedMonth - 1));
-$('#next-month').addEventListener('click', () => openMonth(selectedMonth + 1));
-$('#include-tentative').addEventListener('change', render);
-$('#item-form').elements.repeat.addEventListener('change', syncRecurrence);
-
-// All user-supplied text is escaped or assigned via textContent. No innerHTML from imports.
-document.addEventListener('click', event => {
-  const close = event.target.closest('[data-close]');
-  if (close) { close.closest('dialog').close(); return; }
-  const month = event.target.closest('[data-month]');
-  if (month) { openMonth(Number(month.dataset.month)); return; }
-  const edit = event.target.closest('[data-edit]');
-  if (edit) { openItem(edit.dataset.edit); return; }
-  const actual = event.target.closest('[data-actual]');
-  if (actual) { openActual(actual.dataset.actual); return; }
-  if (event.target.closest('[data-setup]')) { openSetup(); return; }
-  const nav = event.target.closest('[data-view]');
-  if (nav) { view = nav.dataset.view; render(); }
+document.addEventListener('click', e => {
+  const close = e.target.closest('[data-close]'); if (close) { close.closest('dialog').close(); return; }
+  const nav = e.target.closest('[data-view]'); if (nav) { view = nav.dataset.view; render(); return; }
+  const disclosure = e.target.closest('[data-collapse], [data-collapse-all]');
+  if (disclosure) { toggleCollapse(disclosure); return; }
+  const target = e.target.closest('[data-action]'); if (!target) return;
+  const { action, id, kind, object, month, debt, date } = target.dataset;
+  if (target.hasAttribute('data-mutate') && blocked()) return;
+  if (action === 'object') objectDialog(id);
+  if (action === 'item') { itemDialog({ id, kind, objectId: object, month: month ?? selectedMonth }); $('#edit-form').dataset.itemId = id ?? ''; }
+  if (action === 'delete-object') {
+    if (plan.items.some(i => i.objectId === id)) return toast('Đối tượng còn chi tiết; hãy chuyển hoặc xóa từng chi tiết trước.');
+    confirmChange('Xóa đối tượng trống?', 'Không xóa bất kỳ chi tiết nào. Đối tượng dùng chung sẽ rời cả hai trang.', () => commit({ ...plan, objects: plan.objects.filter(o => o.id !== id) }));
+  }
+  if (action === 'delete-item') confirmChange('Xóa chi tiết và lịch dự kiến?', 'Chỉ xóa khoản này, gồm các mốc ước tính; giữ đối tượng và mọi khoản khác.', () => commit({ ...plan, items: plan.items.filter(i => i.id !== id) }));
+  if (action === 'account') accountDialog(id, debt === 'true');
+  if (action === 'snapshot') snapshotDialog(id, debt === 'true', date);
+  if (action === 'debt-plan') { const a = plan.debtAccounts.find(a => a.id === id); itemDialog({ kind: a.direction === 'payable' ? 'expense' : 'income', suggestion: `${a.direction === 'payable' ? 'Trả nợ' : 'Thu hồi'} · ${a.name}` }); }
+  if (action === 'table' || action === 'cards') { table = action === 'table'; render(); }
+  if (action === 'month') monthDialog(month);
+  if (action === 'new-plan') { $('#editor').close(); setupDialog(true); }
+  if (action === 'demo') confirmChange('Thay bằng dữ liệu mẫu?', 'Thay toàn bộ bằng tên/số liệu tổng hợp; xuất bản hiện tại trước.', () => saveAndClose(demoPlan(), 'replace'));
+  if (action === 'download-original' && migration) { download(migration.raw, 'money-seasons-original-legacy.json'); migration.downloaded = true; $('#edit-form [name=ack]').disabled = false; }
 });
-
-const monthOptions = MONTHS.map((m, index) => `<option value="${index + 1}">${m}</option>`).join('');
-$('#start-month').innerHTML = monthOptions;
-$('#end-month').innerHTML = monthOptions;
-render();
+window.addEventListener('beforeunload', e => { if (pending || busy) { e.preventDefault(); e.returnValue = ''; } });
+try { csrf = (await api('/api/session')).csrf; await load(); authenticated(true); }
+catch { authenticated(false); }

@@ -1,82 +1,166 @@
-// Pure monthly model. VND values are whole, bounded integers; null means unknown.
-export const MAX_AMOUNT = 1_000_000_000_000;
-export const MONTHS = Array.from({ length: 12 }, (_, i) => `Tháng ${i + 1}`);
-const validAmount = n => n === null || (Number.isSafeInteger(n) && n >= 0 && n <= MAX_AMOUNT);
-const validMonth = n => Number.isInteger(n) && n >= 1 && n <= 12;
-const text = (s, max) => typeof s === 'string' && s.trim().length > 0 && s.length <= max;
-
-export function validatePlan(p) {
-  const fail = () => { throw new Error('Tệp kế hoạch không hợp lệ hoặc phiên bản chưa được hỗ trợ. Dữ liệu hiện tại được giữ nguyên.'); };
-  if (!p || p.version !== 1 || p.currency !== 'VND' || !Number.isInteger(p.year) || p.year < 2000 || p.year > 2100 ||
-      !text(p.name, 80) || !validAmount(p.openingCash) || typeof p.demo !== 'boolean' ||
-      !Array.isArray(p.items) || p.items.length > 500) fail();
-  const ids = new Set();
-  for (const i of p.items) {
-    if (!i || !text(i.id, 80) || ids.has(i.id) || !text(i.name, 100) || !['income', 'expense'].includes(i.type) ||
-        !['confirmed', 'tentative'].includes(i.status) || !['once', 'monthly'].includes(i.repeat) ||
-        !validMonth(i.start) || !validMonth(i.end) || i.end < i.start || (i.repeat === 'once' && i.end !== i.start) ||
-        !validAmount(i.amount) || typeof i.category !== 'string' || i.category.length > 40 ||
-        !i.actuals || typeof i.actuals !== 'object' || Array.isArray(i.actuals)) fail();
-    ids.add(i.id);
-    for (const [month, amount] of Object.entries(i.actuals)) {
-      if (!/^(?:[1-9]|1[0-2])$/.test(month) || Number(month) < i.start || Number(month) > i.end || !validAmount(amount) || amount === null) fail();
+// Active v3 monthly planning model: snapshots + plans, never transactions/actuals.
+import * as legacy from './legacy-model.js';
+export { MAX_AMOUNT, MAX_BYTES, MONTHS, monthIndex, monthKey, monthRange, occurs, plannedAmount } from './legacy-model.js';
+import { MAX_AMOUNT, MAX_BYTES, monthRange, monthIndex, monthKey, occurs, plannedAmount } from './legacy-model.js';
+const fail = (message = 'Kế hoạch không hợp lệ. Dữ liệu hiện tại được giữ nguyên.') => { throw new Error(message); };
+const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+const text = (value, max, optional = false) => typeof value === 'string' && value.length <= max && (optional || !!value.trim());
+const amount = value => value === null || (Number.isSafeInteger(value) && value >= 0 && value <= MAX_AMOUNT);
+const exact = value => { if (!Number.isSafeInteger(value)) fail('Tổng số tiền vượt giới hạn tính toán.'); return value; };
+function shape(value, fields) {
+  if (!record(value) || Object.keys(value).some(key => !fields.split(' ').includes(key))) fail('Trường dữ liệu không được hỗ trợ; không tự xóa dữ liệu.');
+}
+export function todayISO(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);
+  const get = type => parts.find(p => p.type === type).value;
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+export function validDate(value) {
+  if (typeof value !== 'string' || !/^(20\d\d|2100)-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(+date) && date.toISOString().slice(0, 10) === value;
+}
+export function blankPlan(startMonth = '2026-11', endMonth = '2027-12') {
+  return validatePlan({ version: 3, currency: 'VND', name: 'Kế hoạch gia đình', demo: false, startMonth, endMonth,
+    objects: [], items: [], accounts: [], snapshots: [], debtAccounts: [], debtSnapshots: [] });
+}
+export function validatePlan(source, { today = todayISO() } = {}) {
+  shape(source, 'version currency name demo startMonth endMonth objects items accounts snapshots debtAccounts debtSnapshots');
+  if (source.version !== 3 || source.currency !== 'VND' || !text(source.name, 80) || typeof source.demo !== 'boolean' || !validDate(today)) fail();
+  monthRange(source.startMonth, source.endMonth);
+  const p = structuredClone(source), ids = new Set();
+  const list = (name, max) => { if (!Array.isArray(p[name]) || p[name].length > max) fail(); return p[name]; };
+  function identify(value) {
+    if (!text(value.id, 80) || ids.has(value.id)) fail('Mã dữ liệu phải duy nhất.');
+    ids.add(value.id);
+  }
+  for (const o of list('objects', 500)) {
+    shape(o, 'id name type'); identify(o);
+    if (!text(o.name, 80) || !['person', 'group', 'category'].includes(o.type)) fail();
+    o.name = o.name.trim();
+  }
+  for (const name of ['accounts', 'debtAccounts']) for (const a of list(name, 500)) {
+    shape(a, name === 'accounts' ? 'id name' : 'id name direction'); identify(a);
+    if (!text(a.name, 80) || (name === 'debtAccounts' && !['payable', 'receivable'].includes(a.direction))) fail();
+    a.name = a.name.trim();
+  }
+  for (const i of list('items', 500)) {
+    shape(i, 'id objectId name description type status amount recurrence amountChanges'); identify(i);
+    if (!p.objects.some(o => o.id === i.objectId) || !text(i.name, 100) || !text(i.description, 500, true) ||
+        !['income', 'expense'].includes(i.type) || !['confirmed', 'tentative'].includes(i.status) || !amount(i.amount)) fail();
+    i.name = i.name.trim();
+    const r = i.recurrence; shape(r, 'kind anchor end everyMonths');
+    const a = monthIndex(r.anchor), b = monthIndex(r.end);
+    if (!['once', 'interval'].includes(r.kind) || b < a || !Number.isInteger(r.everyMonths) || r.everyMonths < 1 || r.everyMonths > 120 ||
+        (r.kind === 'once' && (a !== b || r.everyMonths !== 1))) fail('Lịch lặp không hợp lệ.');
+    // Save the full schedule independently of the forecast window. Only
+    // forecast() clips occurrences; changing the view must not discard history.
+    if (!Array.isArray(i.amountChanges) || i.amountChanges.length > 120) fail();
+    let previous = '';
+    for (const c of i.amountChanges) {
+      shape(c, 'month amount');
+      if (!amount(c.amount) || !occurs(i, c.month) || c.month <= previous) fail('Mốc ước tính phải duy nhất, tăng dần, đúng lịch.');
+      previous = c.month;
     }
   }
-  // Copy only supported fields. Never retain arbitrary imported keys.
-  return {
-    version: 1, currency: 'VND', year: p.year, name: p.name.trim(), openingCash: p.openingCash, demo: p.demo,
-    items: p.items.map(i => ({ id: i.id, name: i.name.trim(), type: i.type, status: i.status, repeat: i.repeat,
-      start: i.start, end: i.end, amount: i.amount, category: i.category, actuals: { ...i.actuals } }))
-  };
+  for (const [name, accounts] of [['snapshots', p.accounts], ['debtSnapshots', p.debtAccounts]]) {
+    const dates = new Set();
+    for (const s of list(name, 5000)) {
+      shape(s, 'id accountId date amount'); identify(s);
+      if (!accounts.some(a => a.id === s.accountId) || !validDate(s.date) || s.date > today || s.amount === null || !amount(s.amount)) fail('Số dư cần ngày hôm nay/lịch sử hợp lệ và số tiền.');
+      const key = JSON.stringify([s.accountId, s.date]);
+      if (dates.has(key)) fail('Một tài khoản chỉ có một số dư mỗi ngày; cần xác nhận sửa mốc.');
+      dates.add(key);
+    }
+  }
+  p.name = p.name.trim();
+  if (new TextEncoder().encode(JSON.stringify(p)).length > MAX_BYTES) fail('Kế hoạch vượt 1 MB.');
+  forecast(p); forecast(p, true);
+  // Debt sums also must be exact, independently of cash.
+  for (const month of monthRange(p.startMonth, p.endMonth)) { debtTotal(p, 'payable', month); debtTotal(p, 'receivable', month); }
+  return p;
 }
-
-export function occurs(item, month) {
-  return month >= item.start && month <= item.end;
+export function latestSnapshot(snapshots, accountId, month) {
+  return snapshots.filter(s => s.accountId === accountId && s.date.slice(0, 7) <= month)
+    .reduce((latest, s) => !latest || s.date > latest.date ? s : latest, null);
 }
-
-export function forecast(plan, includeTentative = false) {
-  let balance = plan.openingCash ?? 0;
-  let incomplete = plan.openingCash === null;
-  return MONTHS.map((label, index) => {
-    const month = index + 1;
-    const entries = plan.items.filter(i => occurs(i, month)).map(item => {
-      const actual = item.actuals[month];
-      // Recorded cash always counts, even if the original plan was tentative.
-      const included = item.status === 'confirmed' || includeTentative || actual !== undefined;
-      return { ...item, actual, effective: actual ?? item.amount, included };
-    });
-    const active = entries.filter(i => i.included);
-    const missing = active.filter(i => i.effective === null).length;
+export function cashBaseline(p, month) {
+  const references = p.accounts.map(a => ({ ...a, snapshot: latestSnapshot(p.snapshots, a.id, month) }));
+  return { known: references.reduce((n, a) => exact(n + (a.snapshot?.amount ?? 0)), 0),
+    missing: references.length ? references.filter(a => !a.snapshot).length : 1, references };
+}
+export function debtTotal(p, direction, month) {
+  return p.debtAccounts.filter(a => a.direction === direction).reduce((out, a) => {
+    const s = latestSnapshot(p.debtSnapshots, a.id, month);
+    if (s) out.known = exact(out.known + s.amount); else out.missing++;
+    return out;
+  }, { known: 0, missing: 0 });
+}
+export function forecast(p, includeTentative = false) {
+  let balance = 0, incomplete = true, totalIncome = 0, totalExpense = 0;
+  return monthRange(p.startMonth, p.endMonth).map((month, index) => {
+    const base = cashBaseline(p, month), fresh = p.snapshots.some(s => s.date.slice(0, 7) === month), reset = index === 0 || fresh;
+    if (reset) { balance = base.known; incomplete = base.missing > 0; }
+    const openingIncomplete = incomplete, opening = balance;
+    const entries = p.items.filter(i => occurs(i, month)).map(i => ({ ...i, planned: plannedAmount(i, month), effective: plannedAmount(i, month), included: i.status === 'confirmed' || includeTentative }));
+    const active = entries.filter(i => i.included), missing = active.filter(i => i.effective === null).length;
+    const sum = type => active.filter(i => i.type === type).reduce((n, i) => exact(n + (i.effective ?? 0)), 0);
+    const income = sum('income'), expense = sum('expense');
+    const incomeMissing = active.filter(i => i.type === 'income' && i.effective === null).length;
+    const expenseMissing = active.filter(i => i.type === 'expense' && i.effective === null).length;
+    totalIncome = exact(totalIncome + income); totalExpense = exact(totalExpense + expense);
     incomplete ||= missing > 0;
-    const income = active.filter(i => i.type === 'income').reduce((n, i) => n + (i.effective ?? 0), 0);
-    const expense = active.filter(i => i.type === 'expense').reduce((n, i) => n + (i.effective ?? 0), 0);
-    const opening = balance;
-    balance += income - expense;
-    if (!Number.isSafeInteger(balance)) throw new Error('Tổng số tiền vượt giới hạn tính toán.');
-    return { month, label, opening, income, expense, net: income - expense, closing: balance, incomplete, missing, entries };
+    balance = exact(exact(balance + income) - expense);
+    return { month, opening, openingIncomplete, income, expense, net: exact(income - expense), closing: balance, incomplete, missing, incomeMissing, expenseMissing, entries, reset, fresh, references: base.references, missingAccounts: base.missing };
   });
 }
-
-export function blankPlan(year = new Date().getFullYear()) {
-  return { version: 1, currency: 'VND', year, name: 'Kế hoạch của tôi', openingCash: null, demo: false, items: [] };
+// Choose a real occurrence for editing even when no occurrence is in the window.
+// Prefer the first at/after the reference; after the schedule, use its final one.
+export function estimateMonth(item, reference) {
+  const r = item.recurrence, first = monthIndex(r.anchor), step = r.everyMonths;
+  const last = r.kind === 'once' ? first : first + Math.floor((monthIndex(r.end) - first) / step) * step;
+  const next = first + Math.ceil(Math.max(0, monthIndex(reference) - first) / step) * step;
+  return monthKey(Math.min(next, last));
 }
-
+export function changeWindow(p, startMonth, endMonth) { return validatePlan({ ...p, startMonth, endMonth }); }
+export function reviseEstimate(p, id, month, value) {
+  if (!amount(value)) fail();
+  const next = structuredClone(p), item = next.items.find(i => i.id === id);
+  if (!item || !occurs(item, month)) fail('Tháng hiệu lực phải thuộc lịch.');
+  item.amountChanges = [...item.amountChanges.filter(c => c.month !== month), { month, amount: value }].sort((a, b) => a.month.localeCompare(b.month));
+  return validatePlan(next);
+}
+export function setSnapshot(p, snapshot, { debt = false, confirmed = false } = {}) {
+  const next = structuredClone(p), list = debt ? next.debtSnapshots : next.snapshots;
+  const index = list.findIndex(s => s.accountId === snapshot.accountId && s.date === snapshot.date);
+  if (index >= 0) {
+    if (!confirmed) fail('Cần xác nhận thay số dư cùng ngày.');
+    list[index] = { ...snapshot, id: list[index].id };
+  } else list.push(snapshot);
+  return validatePlan(next);
+}
+// No automatic migration: caller must retain/export raw original and disclose actual exclusion.
+export function convertLegacy(source, { confirmed = false } = {}) {
+  if (!confirmed) fail('Cần lưu nguyên bản và xác nhận không dùng thực tế cũ trong kế hoạch mới.');
+  const old = source.version === 1 ? legacy.migrateV1(source) : legacy.validatePlan(source);
+  const p = blankPlan(old.startMonth, old.endMonth); p.name = old.name; p.demo = old.demo;
+  for (const i of old.items) {
+    // Equal text is not identity. Give each legacy detail a separately identified
+    // object; the preview exposes this conservative mapping for explicit review.
+    const name = i.personLabel.trim() || i.category.trim() || 'Kế hoạch cũ';
+    let objectId = `legacy-object-${p.objects.length + 1}`;
+    while (old.items.some(i => i.id === objectId)) objectId += '-';
+    p.objects.push({ id: objectId, name, type: 'category' });
+    p.items.push({ id: i.id, objectId, name: i.name, description: [i.category, i.personLabel].filter(Boolean).join(' · '), type: i.type, status: i.status,
+      amount: i.amount, recurrence: i.recurrence, amountChanges: i.amountChanges });
+  }
+  // Opening cash has no account/reference date. Leave unknown, never fabricate a snapshot.
+  return validatePlan(p);
+}
 export function demoPlan() {
-  const item = (id, name, type, amount, start, end, category, status = 'confirmed', actuals = {}) =>
-    ({ id, name, type, amount, start, end, category, status, actuals, repeat: start === end ? 'once' : 'monthly' });
-  return {
-    version: 1, currency: 'VND', year: 2027, name: 'Một năm an tâm', openingCash: 20_000_000, demo: true,
-    items: [
-      item('salary', 'Thu nhập gia đình', 'income', 30_000_000, 1, 12, 'Thu nhập'),
-      item('living', 'Sinh hoạt & thực phẩm', 'expense', 12_000_000, 1, 12, 'Sinh hoạt', 'confirmed', { 1: 13_500_000 }),
-      item('home', 'Tiền nhà', 'expense', 8_000_000, 1, 12, 'Nhà cửa'),
-      item('repayment', 'Trả khoản vay', 'expense', 4_000_000, 1, 12, 'Khoản vay'),
-      item('tet', 'Tết & quà cho gia đình', 'expense', 20_000_000, 2, 2, 'Gia đình'),
-      item('insurance', 'Bảo hiểm hằng năm', 'expense', 24_000_000, 4, 4, 'Sức khỏe'),
-      item('tuition', 'Học phí đầu năm học', 'expense', 36_000_000, 9, 9, 'Học tập'),
-      item('bonus', 'Thưởng cuối năm', 'income', 25_000_000, 12, 12, 'Thu nhập'),
-      item('trip', 'Chuyến đi mùa hè', 'expense', 18_000_000, 7, 7, 'Trải nghiệm', 'tentative'),
-      item('repair', 'Bảo dưỡng xe', 'expense', null, 11, 11, 'Đi lại')
-    ]
-  };
+  const p = blankPlan(); p.demo = true; p.name = 'Gia đình mẫu';
+  p.objects = [{ id: 'family', type: 'group', name: 'Gia đình mẫu' }, { id: 'person', type: 'person', name: 'Thành viên A' }];
+  p.items = [{ id: 'living', objectId: 'family', name: 'Sinh hoạt', description: 'Ví dụ tổng hợp', type: 'expense', status: 'confirmed', amount: 2000,
+    recurrence: { kind: 'interval', anchor: p.startMonth, end: p.endMonth, everyMonths: 1 }, amountChanges: [] }];
+  return validatePlan(p);
 }
