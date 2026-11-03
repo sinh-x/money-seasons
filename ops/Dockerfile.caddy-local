@@ -1,0 +1,5 @@
+FROM caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+# The upstream executable carries cap_net_bind_service. It is unnecessary on 3081
+# and can cause exec EPERM with cap_drop=ALL. Remove it at build time, not runtime.
+RUN setcap -r /usr/bin/caddy
+USER 1000:1000
