@@ -56,7 +56,7 @@ Do not export/share Caddy's entire directory: it contains the private CA key. It
 
 ## Current v3 update (2026-11-03, explicitly requested)
 
-**Latest update:** separately confirmed full-schedule/overlapping-forecast behavior (`b474963`) was rebuilt and deployed. All six served HTML/JS/CSS assets match that checkout over CA-verified HTTPS; unauthenticated finance/session endpoints return401/no-store. Existing private mounts were retained, with no authenticated finance access/migration. The old3080 container ID/image/start time remained unchanged.
+**Latest update:** separately confirmed collapse/expand controls (`9707513`), including the earlier full-schedule/overlapping-forecast behavior (`b474963`), were rebuilt and deployed. Use arrows/names or **Thu gọn tất cả / Mở rộng tất cả** in the current workspace; totals remain visible and no financial saves occur from disclosure toggles. All six served HTML/JS/CSS assets match that checkout over CA-verified HTTPS; unauthenticated finance/session endpoints return401/no-store. Existing private mounts were retained, with no authenticated finance access/migration. The old3080 container ID/image/start time remained unchanged.
 
 **Operational caveat:** the OCI `procReady` health-check failure recurred after the earlier `GOMAXPROCS=2` adjustment. Docker reported60 container tasks while the Caddy process had8 threads, so the original concurrency explanation is not a proven root cause or durable fix. Restarting only local Caddy restored healthy native probes; both services were healthy at verification. No PID/security limits were relaxed. Further host/runtime investigation is separate; do not treat a short healthy check as long-term resolution.
 
