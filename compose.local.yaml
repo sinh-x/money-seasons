@@ -41,6 +41,9 @@ services:
       dockerfile: Dockerfile.caddy-local
     image: money-seasons-local-test-caddy:2.10.2
     user: "1000:1000"
+    # Leave room for health-check exec processes under the retained 64-PID cap.
+    environment:
+      GOMAXPROCS: "2"
     ports:
       - "127.0.0.1:3081:3081"
     networks: [edge, backend]

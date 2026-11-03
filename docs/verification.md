@@ -44,7 +44,13 @@ Node logs are ephemeral `/tmp/ms001-final-{model,server,deployment,all}.log`; fi
 
 Inspected actual Chrome screenshots of desktop calendar, mobile expense objects/details and mobile month detail. Observed year-visible chronological columns, separately grouped flows and explicit unknown labels, contained scrolling, readable parsed/maximum values, stacked narrow-screen controls/cards and labeled native month dialog. This is agent observation of synthetic data, **not Sinh's UAT** or an accessibility certification.
 
-## Still not performed / not claimed
+## Separately authorized local-stack follow-up
+
+After the four-phase implementation, Sinh requested updating the local stack. The app was rebuilt, the local web service recreated, and the pre-existing Caddy health failure resolved with bounded `GOMAXPROCS=2`, retaining the64-PID cap. Both services are healthy. CA-verified HTTPS serves0.3.0; all six deployed HTML/JS/CSS assets match the checkout; unauthenticated finance/session requests return401/no-store. All64 Node tests passed after the config adjustment. The old3080 container ID/image/start time remained unchanged. No login/finance read/migration or host trust/private-network changes were performed. See [current update evidence](local-stack.md#current-v3-update-2026-11-03-explicitly-requested).
+
+The unperformed runtime line below describes the original four-phase implementation checkpoint; the follow-up supersedes it **only for the localhost test stack**, not real-family rollout, UAT or independent review.
+
+## Still not performed / not claimed (four-phase checkpoint)
 
 - Native workflow/source continuation, package/matrix promotion and independent exact-FeatureSHA review or Critical/Major clearance.
 - Fresh Docker image build/container restart/runtime qualification; existing3080/3081 stacks remain untouched/possibly older. Historical local-Caddy results are explicitly historical.

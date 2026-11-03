@@ -16,6 +16,9 @@ test('local Caddy stack is a separate loopback-only internal project with no app
   assert.match(source, /networks: \[edge, backend\]/);
   assert.doesNotMatch(source.split('  caddy:')[0], /^\s+ports:/m);
   assert.match(source, /user: "1000:1000"/);
+  const caddy = source.split('  caddy:')[1];
+  assert.match(caddy, /GOMAXPROCS: "2"/); // Bound Go threads without weakening the PID safety limit.
+  assert.match(caddy, /pids_limit: 64/);
   assert.match(source, /image: money-seasons-local-test-caddy:2\.10\.2/);
   const caddyImage = await readFile('ops/Dockerfile.caddy-local', 'utf8');
   assert.match(caddyImage, /FROM caddy:2\.10\.2-alpine@sha256:[a-f0-9]{64}/);

@@ -44,7 +44,7 @@ Bare numbers mean thousands. One/two decimal digits are accepted; consistent thr
 npm run local:up
 ```
 
-Open **https://localhost:3081**. This separate loopback-only stack uses private synthetic-test storage and leaves the old port-3080 app alone. **Running this command rebuilds/deploys the current source**; it was not run for this revision. An existing local stack may still be the older candidate with v2 data. Export that original before explicitly converting it.
+Open **https://localhost:3081**. This separate loopback-only stack uses private synthetic-test storage and leaves the old port-3080 app alone. **Running this command rebuilds/deploys the current source.** Following Sinh's separate update request, the local stack now serves v0.3.0 with both services healthy; see [update evidence](docs/local-stack.md#current-v3-update-2026-11-03-explicitly-requested). Existing storage/passphrase were retained and no plan migration was performed. Export any legacy original before explicitly converting it.
 
 The generated local-only passphrase lives at `~/.local/share/money-seasons-local-test/passphrase`; open it privately in your editor, never print/paste it into logs/tickets. Caddy uses a local CA, with no automatic host-trust changes. See [local stack guide](docs/local-stack.md). Do not import household data into the test stack.
 
