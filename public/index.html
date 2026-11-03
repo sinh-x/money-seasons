@@ -1,92 +1,44 @@
 <!doctype html>
 <html lang="vi">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#244d40">
-  <title>Money Seasons · Một năm an tâm</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css">
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#244d40"><title>Money Seasons · Kế hoạch gia đình</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/styles.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
   <a class="skip" href="#main">Đến nội dung chính</a>
-  <header class="topbar">
-    <a href="/" class="brand"><img src="/favicon.svg" width="36" height="36" alt=""><span>money<span class="brand-light">seasons</span><small>ĐÓN TRƯỚC NHỮNG MÙA CHI TIÊU</small></span></a>
-    <nav aria-label="Điều hướng chính">
-      <button class="nav-button active" data-view="year" aria-current="page">Tổng quan năm</button>
-      <button class="nav-button" data-view="items">Khoản thu & chi</button>
-    </nav>
-    <button class="quiet" id="help-button"><span aria-hidden="true">ⓘ</span> Về bản thử nghiệm</button>
-  </header>
-  <main id="main" tabindex="-1">
-    <section class="demo-banner" id="demo-banner" aria-label="Dữ liệu minh họa"><span><strong>Bản thử nghiệm · Dữ liệu mẫu</strong> <span class="banner-detail">Khám phá một năm tài chính, không cần tài khoản.</span></span><button id="new-plan">Bắt đầu kế hoạch riêng <span aria-hidden="true">↗</span></button></section>
-    <div id="storage-warning" class="warning" role="alert" hidden></div>
-    <section class="page-heading">
-      <div><p class="eyebrow">GÓC NHÌN DÀI HẠN, AN TÂM MỖI THÁNG</p><h1 id="plan-title">Một năm an tâm</h1><p class="subtitle">Biết trước tháng nào cần nhiều tiền. Chuẩn bị từ hôm nay.</p></div>
-      <div class="heading-actions"><button class="button secondary" id="settings-button">Chỉnh kế hoạch</button><button class="button primary" id="add-button"><span aria-hidden="true">＋</span> Thêm khoản thu / chi</button></div>
-    </section>
-    <section class="summary-grid" aria-label="Tóm tắt kế hoạch" id="summary"></section>
-    <div class="workspace">
-      <section class="plan-panel" aria-labelledby="section-title">
-        <div class="section-heading"><div><p class="eyebrow" id="view-eyebrow">12 THÁNG · MỘT BỨC TRANH</p><h2 id="section-title">Bản đồ tài chính <span id="year-label"></span></h2></div><span class="year-pill" id="currency-label">VND · Theo tháng</span></div>
-        <div class="forecast-controls"><label class="toggle-label"><input type="checkbox" id="include-tentative"><span>Tính cả khoản đang cân nhắc</span></label><span class="legend"><i class="legend-dot"></i> Thanh ngang: tổng chi</span></div>
-        <p id="empty-note" class="empty-note" hidden>Chưa có khoản thu chi. Thêm thu nhập và các khoản cần chi để bắt đầu nhìn thấy một năm của bạn.</p>
-        <div class="month-grid" id="months"></div>
-        <div class="all-items" id="all-items" hidden></div>
-        <p class="forecast-note"><span aria-hidden="true">ⓘ</span> Ước tính theo tháng, không đảm bảo đủ tiền vào từng ngày. Số dư được chuyển tiếp giữa các tháng.</p>
-      </section>
-      <aside class="side-panel" aria-label="Điều cần chú ý">
-        <div class="insight-card"><div class="leaf-icon" aria-hidden="true">↗</div><p class="eyebrow">NHÌN TRƯỚC MỘT CHÚT</p><h2>Mỗi mùa chi tiêu,<br>một kế hoạch nhỏ.</h2><p>Không phải tháng nào cũng giống nhau. Nhìn cả năm để những khoản lớn không còn bất ngờ.</p><div id="insight"></div></div>
-        <section class="attention-card"><h3>Cần bạn để ý <span id="attention-count"></span></h3><div id="attention"></div></section>
-        <section class="local-card"><span aria-hidden="true">⌂</span><div><strong>Ở đây, trên trình duyệt này</strong><p>Không tài khoản, không đồng bộ. Hãy xuất bản sao để tránh mất dữ liệu.</p><button class="text-button" id="export-button">Xuất kế hoạch ↓</button><button class="text-button" id="import-button">Nhập bản sao ↑</button><input id="import-file" type="file" accept="application/json,.json" hidden></div></section>
-      </aside>
+  <section id="access-panel" class="access-panel" aria-labelledby="access-title">
+    <h1 id="access-title">Money Seasons</h1><p>Cùng hiểu · cùng lên kế hoạch. Một kế hoạch riêng tư trên laptop gia đình.</p>
+    <form id="login-form"><label class="field">Cụm mật khẩu gia đình<input name="passphrase" type="password" autocomplete="current-password" required maxlength="1024"></label><p id="login-error" class="form-error" role="alert" hidden></p><button class="button primary" type="submit">Đăng nhập</button></form>
+    <p>Chỉ truy cập qua HTTPS riêng tư. Mọi thành viên được phép xem và sửa cùng kế hoạch.</p>
+  </section>
+  <div class="shell" id="application" hidden>
+    <aside class="sidebar"><a href="/" class="brand"><span class="brand-mark" aria-hidden="true">◒</span><span>money<br>seasons<small>Cùng hiểu · cùng lên kế hoạch</small></span></a>
+      <nav class="navigation" aria-label="Các tính năng">
+        <button class="nav-link active" data-view="calendar" aria-current="page"><span class="nav-symbol" aria-hidden="true">▦</span>Lịch tài chính</button>
+        <button class="nav-link" data-view="expense"><span class="nav-symbol" aria-hidden="true">↗</span>Rõ chi</button>
+        <button class="nav-link" data-view="income"><span class="nav-symbol" aria-hidden="true">↙</span>Đa thu</button>
+        <button class="nav-link" data-view="accounts"><span class="nav-symbol" aria-hidden="true">▤</span>Tài khoản</button>
+        <button class="nav-link" data-view="debts"><span class="nav-symbol" aria-hidden="true">⇄</span>Công nợ</button>
+      </nav>
+      <div class="sidebar-note"><strong>Một góc nhìn chung.</strong><p>Ghi điều cần chuẩn bị, nhập tiền sau. Không phải sổ giao dịch, không ghi thu chi thực tế.</p></div>
+    </aside>
+    <div class="main-area">
+      <header class="topbar"><span class="breadcrumb" id="plan-title"></span><div class="top-actions"><button class="button small" id="settings-button">Chỉnh kế hoạch</button><button class="button small" id="export-button">Xuất JSON ↓</button><button class="button small" id="import-button">Nhập JSON ↑</button><button class="button small" id="help-button">Hướng dẫn</button><button class="button small" id="logout-button">Đăng xuất</button></div></header>
+      <main id="main" tabindex="-1">
+        <p id="save-status" role="status"></p><p id="storage-warning" class="info amber" role="alert" hidden></p>
+        <div id="save-recovery" class="controls-left" hidden><button class="button" id="reconcile-button">Đọc lại trạng thái lưu</button><button class="button" id="reload-button">Nạp bản máy chủ</button><button class="button" id="retry-button" hidden>Thử lưu lại</button></div>
+        <button class="button" id="legacy-button" hidden>Chuyển nguyên bản v1/v2…</button>
+        <div id="workspace"></div>
+        <footer class="page-footer"><span>VND · Theo tháng · Không phải tư vấn tài chính</span><span>Bản 0.3 · Laptop không phải bản sao lưu</span></footer>
+      </main>
     </div>
-    <footer><span>moneyseasons <span aria-hidden="true">·</span> Ít bất ngờ hơn, nhiều an tâm hơn.</span><span>Bản mockup 0.1 · Chưa phải sản phẩm hoàn chỉnh</span></footer>
-  </main>
-
-  <dialog id="setup-dialog" aria-labelledby="setup-title">
-    <form id="setup-form">
-      <div class="dialog-heading"><div><p class="eyebrow">BẮT ĐẦU THẬT NHẸ NHÀNG</p><h2 id="setup-title">Kế hoạch của bạn</h2></div><button type="button" class="close" data-close aria-label="Đóng">×</button></div>
-      <p class="muted">Chỉ cần năm và tiền đang có. Các khoản thu chi có thể thêm sau.</p>
-      <label>Tên kế hoạch<input name="name" maxlength="80" required autocomplete="off"></label>
-      <div class="form-row"><label>Năm kế hoạch<input name="year" type="number" min="2000" max="2100" required></label><label>Đơn vị tiền<input value="Việt Nam đồng (VND)" disabled></label></div>
-      <label>Tiền có sẵn đầu tháng 1 (₫)<input name="openingCash" type="number" min="0" max="1000000000000" step="1" placeholder="Để trống nếu chưa biết"></label>
-      <p class="field-help">Tổng tiền có thể dùng, gồm cả tiết kiệm nếu đã tính ở đây. Không cộng giá trị nhà, xe hoặc dư nợ. Bản thử nghiệm chỉ hỗ trợ tháng 1–12, chưa hỗ trợ bắt đầu giữa năm.</p>
-      <p id="setup-new-warning" class="warning" hidden>Tạo kế hoạch trống sẽ thay thế dữ liệu đang mở. Bạn có thể hủy để xuất bản sao trước.</p>
-      <p class="form-error" id="setup-error" role="alert"></p>
-      <div class="dialog-actions"><button type="button" class="button secondary" data-close>Hủy</button><button class="button primary" type="submit">Lưu & xem kế hoạch</button></div>
-    </form>
-  </dialog>
-
-  <dialog id="item-dialog" aria-labelledby="item-title">
-    <form id="item-form">
-      <div class="dialog-heading"><div><p class="eyebrow">MỖI KHOẢN MỘT CHÚT RÕ RÀNG</p><h2 id="item-title">Thêm khoản thu / chi</h2></div><button type="button" class="close" data-close aria-label="Đóng">×</button></div>
-      <label>Tên khoản<input name="name" required maxlength="100" placeholder="Ví dụ: Học phí đầu năm" autocomplete="off"></label>
-      <div class="form-row"><label>Loại<select name="type"><option value="expense">Khoản chi</option><option value="income">Khoản thu</option></select></label><label>Trạng thái<select name="status"><option value="confirmed">Đã dự kiến chắc chắn</option><option value="tentative">Đang cân nhắc</option></select></label></div>
-      <label>Số tiền dự kiến mỗi lần (₫)<input name="amount" type="number" min="0" max="1000000000000" step="1" placeholder="Để trống nếu chưa biết"></label>
-      <div class="form-row"><label>Lặp lại<select name="repeat"><option value="once">Một lần</option><option value="monthly">Hằng tháng</option></select></label><label>Nhóm<select name="category"><option>Sinh hoạt</option><option>Nhà cửa</option><option>Gia đình</option><option>Học tập</option><option>Sức khỏe</option><option>Đi lại</option><option>Trải nghiệm</option><option>Khoản vay</option><option>Thu nhập</option><option>Khác</option></select></label></div>
-      <div class="form-row"><label>Tháng bắt đầu<select name="start" id="start-month"></select></label><label id="end-month-label">Đến hết tháng<select name="end" id="end-month"></select></label></div>
-      <p class="field-help" id="edit-scope">Chỉnh số dự kiến áp dụng cho cả chuỗi. Số thực tế đã ghi được giữ nguyên. Để trống số tiền không có nghĩa là 0 ₫.</p>
-      <p class="form-error" id="item-error" role="alert"></p>
-      <div class="dialog-actions"><button type="button" class="button danger" id="delete-item" hidden>Xóa khoản này</button><button type="button" class="button secondary" data-close>Hủy</button><button class="button primary" type="submit">Lưu khoản</button></div>
-    </form>
-  </dialog>
-
-  <dialog id="month-dialog" class="wide-dialog" aria-labelledby="month-title">
-    <div class="dialog-heading"><div><p class="eyebrow" id="month-eyebrow">CHI TIẾT THÁNG</p><h2 id="month-title">Tháng</h2></div><button type="button" class="close" data-close aria-label="Đóng">×</button></div>
-    <div id="month-content"></div>
-    <div class="dialog-actions"><button class="button secondary" id="previous-month" aria-label="Tháng trước">←</button><button class="button secondary" id="next-month" aria-label="Tháng sau">→</button><button class="button primary" id="add-in-month">＋ Thêm khoản cho tháng này</button></div>
-  </dialog>
-
-  <dialog id="actual-dialog" aria-labelledby="actual-title">
-    <form id="actual-form"><div class="dialog-heading"><h2 id="actual-title">Ghi số thực tế</h2><button type="button" class="close" data-close aria-label="Đóng">×</button></div><p id="actual-context" class="muted"></p><label>Số tiền thực tế (₫)<input name="actual" type="number" min="0" max="1000000000000" step="1" placeholder="Để trống để xóa số thực tế"></label><p class="field-help">Chỉ áp dụng cho tháng đang chọn. Thực tế thay cho dự kiến khi tính số dư, không cộng hai lần. Chưa hỗ trợ thanh toán một phần hoặc chuyển tháng.</p><p class="form-error" id="actual-error" role="alert"></p><div class="dialog-actions"><button type="button" class="button secondary" data-close>Hủy</button><button class="button primary">Lưu thực tế</button></div></form>
-  </dialog>
-
-  <dialog id="confirm-dialog" aria-labelledby="confirm-title"><form id="confirm-form"><div class="dialog-heading"><h2 id="confirm-title">Xác nhận thay thế</h2><button type="button" class="close" data-close aria-label="Đóng">×</button></div><p id="confirm-message"></p><p class="field-help">Bạn có thể hủy và xuất kế hoạch hiện tại trước. Thao tác này không thể hoàn tác.</p><div class="dialog-actions"><button type="button" class="button secondary" data-close>Hủy</button><button class="button primary" type="submit">Xác nhận</button></div></form></dialog>
-
-  <dialog id="help-dialog" class="wide-dialog" aria-labelledby="help-title"><div class="dialog-heading"><div><p class="eyebrow">MOCKUP · CHƯA PHẢI CAM KẾT SẢN PHẨM</p><h2 id="help-title">Cùng thử một năm tài chính</h2></div><button class="close" data-close aria-label="Đóng">×</button></div><div class="help-content"><h3>Thử theo 4 bước</h3><ol><li>Xem tháng nào có khoản chi lớn hoặc số dư âm.</li><li>Mở tháng 9 để hiểu khoản học phí tác động thế nào.</li><li>Thử tính cả chuyến đi đang cân nhắc trong tháng 7.</li><li>Ghi số thực tế, tải lại trang và xuất bản sao.</li></ol><h3>Quy tắc tạm dùng để thảo luận</h3><p>Tiếng Việt · VND nguyên đồng · năm dương lịch. Tiền đầu năm + thu − chi được chuyển tiếp mỗi tháng. Khoản chưa biết chỉ cho phép ước tính từ phần đã biết; cảnh báo thiếu dữ liệu tiếp tục ở các tháng sau. Khoản đang cân nhắc chỉ được tính khi bật lựa chọn, trừ khi đã có số thực tế.</p><p>Số thực tế thay số dự kiến cho đúng một tháng. Chỉnh khoản lặp áp dụng cả chuỗi, nhưng giữ số thực tế. Xóa khoản sẽ xóa cả chuỗi và thực tế sau khi xác nhận.</p><h3>Chưa có trong bản này</h3><p>Kho tài sản/nợ, mục tiêu dự phòng, sao lưu tự động, đồng bộ, tài khoản, kết nối ngân hàng, bắt đầu giữa năm, quy tắc trả một phần/trễ hạn. Khoản trả nợ là tiền chi nhập thủ công, không phải dư nợ.</p><h3>Dữ liệu của bạn</h3><p>Kế hoạch chỉ lưu trong localStorage của trình duyệt, không gửi lên server. Không mã hóa, không tự sao lưu. Xóa dữ liệu trình duyệt, dùng chế độ riêng tư hay mất thiết bị có thể làm mất kế hoạch. Người dùng chung hồ sơ trình duyệt có thể xem dữ liệu. Tệp xuất cũng không mã hóa; hãy giữ an toàn.</p><p>Đây là ước tính theo tháng, không phải tư vấn tài chính hoặc cam kết đủ tiền vào từng ngày.</p><button class="button secondary" id="restore-demo">Khôi phục dữ liệu mẫu</button></div></dialog>
+  </div>
+  <input id="import-file" type="file" accept="application/json,.json" hidden>
+  <dialog id="editor" aria-labelledby="editor-title"></dialog>
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title"><form id="confirm-form"><header class="dialog-head"><h2 id="confirm-title">Xác nhận</h2><button class="icon-button" type="button" data-close aria-label="Đóng">×</button></header><div class="dialog-body"><p id="confirm-message"></p><p>Có thể hủy để xuất bản sao trước. Không tự gộp hay ghi đè bản mới hơn.</p></div><footer class="dialog-actions"><button class="button" type="button" data-close>Hủy</button><button class="button primary" type="submit">Xác nhận</button></footer></form></dialog>
   <div id="toast" class="toast" role="status" hidden></div>
-  <noscript>Vui lòng bật JavaScript để sử dụng bản thử nghiệm Money Seasons. Không có dữ liệu nào được gửi lên máy chủ.</noscript>
+  <noscript>Vui lòng bật JavaScript để sử dụng kế hoạch riêng tư của gia đình.</noscript>
 </body>
 </html>

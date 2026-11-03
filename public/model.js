@@ -134,15 +134,14 @@ export function convertLegacy(source, { confirmed = false } = {}) {
   if (!confirmed) fail('Cần lưu nguyên bản và xác nhận không dùng thực tế cũ trong kế hoạch mới.');
   const old = source.version === 1 ? legacy.migrateV1(source) : legacy.validatePlan(source);
   const p = blankPlan(old.startMonth, old.endMonth); p.name = old.name; p.demo = old.demo;
-  const labels = new Map();
   for (const i of old.items) {
+    // Equal text is not identity. Give each legacy detail a separately identified
+    // object; the preview exposes this conservative mapping for explicit review.
     const name = i.personLabel.trim() || i.category.trim() || 'Kế hoạch cũ';
-    if (!labels.has(name)) {
-      let id = `legacy-object-${labels.size + 1}`;
-      while (old.items.some(i => i.id === id)) id += '-';
-      labels.set(name, id); p.objects.push({ id, name, type: 'category' });
-    }
-    p.items.push({ id: i.id, objectId: labels.get(name), name: i.name, description: '', type: i.type, status: i.status,
+    let objectId = `legacy-object-${p.objects.length + 1}`;
+    while (old.items.some(i => i.id === objectId)) objectId += '-';
+    p.objects.push({ id: objectId, name, type: 'category' });
+    p.items.push({ id: i.id, objectId, name: i.name, description: [i.category, i.personLabel].filter(Boolean).join(' · '), type: i.type, status: i.status,
       amount: i.amount, recurrence: i.recurrence, amountChanges: i.amountChanges });
   }
   // Opening cash has no account/reference date. Leave unknown, never fabricate a snapshot.
