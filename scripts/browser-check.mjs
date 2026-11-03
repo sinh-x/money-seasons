@@ -265,6 +265,63 @@ try {
     await nav(page, 'expense'); await page.screenshot({ path: path.join(artifacts, 'mobile-expenses.png'), fullPage: true });
     await page.locator('#help-button').click(); await axe(page, 'help'); await close(page);
   });
+  await check('collapse overview/details in all requested views: keyboard, nested state, totals and zero saves', async () => {
+    const before = await snapshot(page), writes = [];
+    const observe = r => { if (r.method() === 'PUT') writes.push(r.url()); }; page.on('request', observe);
+    try {
+      for (const width of [320, 360, 390, 768, 1440]) {
+        await page.setViewportSize({ width, height: 1000 });
+        await nav(page, 'expense'); await page.locator('[data-collapse-all=open]').click();
+        let toggle = page.locator('.object-title [data-collapse]').first();
+        const total = await page.locator('.object-card .object-total').first().textContent();
+        await toggle.focus(); await page.keyboard.press('Enter');
+        assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
+        assert.equal(await toggle.evaluate(e => e === document.activeElement), true);
+        assert.equal(await page.locator('.detail-row').first().isVisible(), false);
+        assert.equal(await page.locator('.object-card .object-total').first().isVisible(), true);
+        assert.equal(await page.locator('.object-card .object-total').first().textContent(), total);
+        await nav(page, 'income'); await nav(page, 'expense'); assert.equal(await toggle.getAttribute('aria-expanded'), 'false');
+        await page.locator('[data-collapse-all=close]').click(); await overflow(page); await axe(page, `expense-collapsed-${width}`);
+        if ([390, 1440].includes(width)) { await page.evaluate(() => scrollTo(0, 0)); await page.screenshot({ path: path.join(artifacts, `collapsed-expenses-${width}.png`), fullPage: true }); }
+        await page.locator('[data-collapse-all=open]').click(); assert.equal(await page.locator('.detail-row').first().isVisible(), true);
+        await nav(page, 'income'); await page.locator('[data-collapse-all=close]').click();
+        assert.equal(await page.locator('.object-card .object-total').first().isVisible(), true);
+        assert.ok((await page.locator('.object-card .object-total').first().textContent()).includes('chưa biết'));
+        await overflow(page); await axe(page, `income-collapsed-${width}`); await page.locator('[data-collapse-all=open]').click();
+        await nav(page, 'calendar'); await page.locator('[data-action=table]').click(); await page.locator('[data-collapse-all=open]').click();
+        const totals = await page.locator('.calendar-table .total-row, .calendar-table .balance-row').allTextContents();
+        const group = page.locator('[data-collapse^="calendar:expense:"]').first();
+        await page.locator('.table-scroll').evaluate(e => { e.scrollLeft = 200; });
+        await group.evaluate(e => e.focus({ preventScroll: true }));
+        const left = await page.locator('.table-scroll').evaluate(e => e.scrollLeft);
+        await page.keyboard.press('Space'); assert.equal(await group.getAttribute('aria-expanded'), 'false');
+        assert.equal(await group.evaluate(e => e === document.activeElement), true);
+        assert.equal(await page.locator('.table-scroll').evaluate(e => e.scrollLeft), left);
+        assert.equal(await group.evaluate(e => e.getAttribute('aria-controls').split(' ').every(id => document.getElementById(id)?.hidden)), true);
+        await page.locator('[data-collapse="section:expense"]').click(); assert.equal(await page.locator('#calendar-expense-groups').isVisible(), false);
+        assert.equal(await page.getByText('Tổng chi dự kiến', { exact: true }).isVisible(), true);
+        await page.locator('[data-collapse="section:expense"]').click(); assert.equal(await group.getAttribute('aria-expanded'), 'false');
+        await overflow(page); await axe(page, `calendar-group-collapsed-${width}`);
+        await page.locator('[data-collapse-all=close]').click();
+        assert.equal(await page.locator('#calendar-income-groups').isVisible(), false);
+        assert.equal(await page.locator('#calendar-expense-groups').isVisible(), false);
+        assert.deepEqual(await page.locator('.calendar-table .total-row, .calendar-table .balance-row').allTextContents(), totals);
+        await overflow(page); await axe(page, `calendar-sections-collapsed-${width}`);
+        if ([390, 1440].includes(width)) { await page.locator('.table-scroll').evaluate(e => { e.scrollLeft = 0; }); await page.evaluate(() => scrollTo(0, 0)); await page.screenshot({ path: path.join(artifacts, `collapsed-calendar-${width}.png`), fullPage: true }); }
+        await page.locator('[data-collapse-all=open]').click(); assert.equal(await group.getAttribute('aria-expanded'), 'true');
+        for (const view of ['accounts', 'debts']) {
+          await nav(page, view); const summary = await page.locator('.summary-grid').textContent();
+          toggle = page.locator(`[data-collapse="history:${view}"]`); await toggle.focus(); await page.keyboard.press('Enter');
+          assert.equal(await toggle.getAttribute('aria-expanded'), 'false'); assert.equal(await page.locator('.history-table').isVisible(), false);
+          assert.equal(await page.locator('.account-card').first().isVisible(), true); assert.equal(await page.locator('.summary-grid').textContent(), summary);
+          await overflow(page); await axe(page, `${view}-history-collapsed-${width}`);
+          await page.locator('[data-collapse-all=open]').click(); assert.equal(await page.locator('.history-table').isVisible(), true);
+        }
+      }
+      assert.deepEqual(writes, []); assert.deepEqual(await snapshot(page), before);
+      assert.equal(await page.locator('[data-collapse]').evaluateAll(elements => elements.every(e => e.getAttribute('aria-controls').split(' ').every(id => !!document.getElementById(id)))), true);
+    } finally { page.off('request', observe); }
+  });
   await check('fresh browser reads persisted state; logout denies finance; no active actual fields', async () => {
     const state = await snapshot(page), fresh = await browser.newContext(); const p = await fresh.newPage(); watch(p); await login(p); assert.deepEqual((await snapshot(p)).plan, state.plan);
     assert.equal(await p.locator('[name=actual], [data-actual]').count(), 0);

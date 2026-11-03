@@ -13,6 +13,31 @@ let pending = null, busy = false, confirmAction, submitEditor, migration = null,
 const range = () => monthRange(plan.startMonth, plan.endMonth);
 const results = () => forecast(plan, tentative);
 const blocked = () => busy || !!pending || !!serverLegacy;
+// Ephemeral view state only: never included in plan saves/exports or API writes.
+const collapsed = new Set();
+const hiddenGroup = key => collapsed.has(key) ? 'hidden' : '';
+function collapseButton(key, title, controls, text = title) {
+  return `<button type="button" class="collapse-toggle" data-collapse="${h(key)}" aria-expanded="${!collapsed.has(key)}" aria-controls="${h(controls)}" aria-label="${collapsed.has(key) ? 'Mở rộng' : 'Thu gọn'} ${h(title)}">${h(text)}</button>`;
+}
+function collapseKeys() {
+  if (view === 'calendar') return table ? ['section:income', 'section:expense', ...['income', 'expense'].flatMap(type => plan.objects.filter(o => plan.items.some(i => i.objectId === o.id && i.type === type)).map(o => `calendar:${type}:${o.id}`))] : [];
+  if (view === 'income' || view === 'expense') return plan.objects.filter(o => view === 'expense' || plan.items.some(i => i.objectId === o.id && i.type === view)).map(o => `object:${view}:${o.id}`);
+  return [`history:${view}`];
+}
+function collapseTools() {
+  return collapseKeys().length ? '<div class="collapse-tools" role="group" aria-label="Mức chi tiết"><button type="button" class="button small" data-collapse-all="close">Thu gọn tất cả</button><button type="button" class="button small" data-collapse-all="open">Mở rộng tất cả</button></div>' : '';
+}
+function toggleCollapse(target) {
+  const key = target.dataset.collapse, all = target.dataset.collapseAll;
+  if (key !== undefined) { if (collapsed.has(key)) collapsed.delete(key); else collapsed.add(key); }
+  else for (const entry of collapseKeys()) { if (all === 'close') collapsed.add(entry); else collapsed.delete(entry); }
+  // Table/region scrolling and keyboard focus survive the view-only rerender.
+  const scrollers = $$('.table-scroll, .history-scroll').map(e => ({ left: e.scrollLeft, top: e.scrollTop }));
+  render();
+  const next = key !== undefined ? $$('[data-collapse]').find(e => e.dataset.collapse === key) : $$('[data-collapse-all]').find(e => e.dataset.collapseAll === all);
+  next?.focus({ preventScroll: true });
+  $$('.table-scroll, .history-scroll').forEach((e, index) => { if (scrollers[index]) { e.scrollLeft = scrollers[index].left; e.scrollTop = scrollers[index].top; } });
+}
 function toast(message) { clearTimeout(toastTimer); $('#toast').textContent = message; $('#toast').hidden = false; toastTimer = setTimeout(() => { $('#toast').hidden = true; }, 5000); }
 function warning(message) { $('#storage-warning').textContent = message; $('#storage-warning').hidden = !message; }
 function authenticated(value) { $('#access-panel').hidden = value; $('#application').hidden = !value; if (!value) $$('dialog[open]').forEach(d => d.close()); }
@@ -69,7 +94,7 @@ const objectName = id => plan.objects.find(o => o.id === id)?.name ?? '';
 const objectLabel = o => `${TYPES[o.type][0]} ${TYPES[o.type][1]} · ${o.name} [${o.id.slice(-8)}]`;
 function monthOptions(value) { return range().map(m => `<option value="${m}" ${m === value ? 'selected' : ''}>${label(m)}</option>`).join(''); }
 function controls() {
-  return `<div class="controls"><label class="toggle"><input type="checkbox" id="include-tentative" ${tentative ? 'checked' : ''}>Tính cả khoản đang cân nhắc</label><label>Tháng xem <select class="select" id="view-month">${monthOptions(selectedMonth)}</select></label></div>`;
+  return `<div class="controls"><label class="toggle"><input type="checkbox" id="include-tentative" ${tentative ? 'checked' : ''}>Tính cả khoản đang cân nhắc</label><label>Tháng xem <select class="select" id="view-month">${monthOptions(selectedMonth)}</select></label>${collapseTools()}</div>`;
 }
 function render() {
   if (!range().includes(selectedMonth)) selectedMonth = plan.startMonth;
@@ -93,15 +118,16 @@ function itemPage(kind) {
   return heading(TITLES[kind], expense ? 'Bắt đầu từ một người, nhóm hoặc danh mục. Nhớ điều cần chi, thêm chi tiết và lịch, rồi bổ sung tiền sau.' : 'Chỉ hiện đối tượng đã có khoản thu, kể cả chưa biết tiền. Mọi đối tượng dùng chung đều có thể chọn khi thêm thu.',
     button('＋ Tạo đối tượng', 'object', 'data-mutate') + button(`＋ Thêm khoản ${expense ? 'chi' : 'thu'}`, 'item', `data-kind="${kind}" data-mutate`, 'primary')) +
     `<div class="summary-grid">${stat(`Dự kiến ${expense ? 'chi' : 'thu'} · ${label(selectedMonth)}`, sumText(sumItems(items, selectedMonth)), 'Chỉ tính những lần thuộc tháng đang xem.', 'highlight')}${stat('Đối tượng hiển thị', objects.length, expense ? 'Kể cả đối tượng trống.' : 'Có khoản thu là hiển thị.')}${stat('Khoản đã lên kế hoạch', items.length, 'Không ghi số thực tế.')}${stat('Đầu vào số tiền', 'Mặc định × 1.000', '5 = 5.000 ₫ · 5tr = 5.000.000 ₫')}</div>` + controls() +
-    `<div class="steps"><span>1 · Tạo / chọn đối tượng</span><span>→ 2 · Mục đích</span><span>→ 3 · Chi tiết & lịch</span><span>→ 4 · Tiền nhập sau</span></div><section class="object-grid" aria-label="Danh sách đối tượng">${objects.map(o => {
-      const rows = items.filter(i => i.objectId === o.id);
-      return `<article class="object-card" data-object="${h(o.id)}"><header class="object-header"><div class="object-identity"><span class="object-icon ${o.type}" aria-hidden="true">${TYPES[o.type][0]}</span><div><h2 class="object-title">${h(o.name)}</h2><small>${TYPES[o.type][1]} · Mã ${h(o.id.slice(-8))} · dùng chung hai trang</small><div>${button('Đổi tên / loại', 'object', `data-id="${h(o.id)}" data-mutate`, 'text small')}${button('Xóa đối tượng', 'delete-object', `data-id="${h(o.id)}" data-mutate`, 'text small danger')}</div></div></div><div class="object-total"><strong>${h(sumText(sumItems(rows, selectedMonth)))}</strong><small>Dự kiến ${label(selectedMonth)}</small></div></header>
+    `<div class="steps"><span>1 · Tạo / chọn đối tượng</span><span>→ 2 · Mục đích</span><span>→ 3 · Chi tiết & lịch</span><span>→ 4 · Tiền nhập sau</span></div><section class="object-grid" aria-label="Danh sách đối tượng">${objects.map((o, index) => {
+      const rows = items.filter(i => i.objectId === o.id), key = `object:${kind}:${o.id}`, detailsId = `object-${kind}-${index}-details`;
+      return `<article class="object-card collapsible-object" data-object="${h(o.id)}"><header class="object-header"><div class="object-identity"><span class="object-icon ${o.type}" aria-hidden="true">${TYPES[o.type][0]}</span><div><h2 class="object-title">${collapseButton(key, o.name, detailsId)}</h2><small>${TYPES[o.type][1]} · Mã ${h(o.id.slice(-8))} · ${rows.length} khoản · dùng chung hai trang</small></div></div><div class="object-total"><strong>${h(sumText(sumItems(rows, selectedMonth)))}</strong><small>Dự kiến ${label(selectedMonth)}</small></div></header>
+      <div id="${detailsId}" ${hiddenGroup(key)}><div class="object-management">${button('Đổi tên / loại', 'object', `data-id="${h(o.id)}" data-mutate`, 'text small')}${button('Xóa đối tượng', 'delete-object', `data-id="${h(o.id)}" data-mutate`, 'text small danger')}</div>
       ${rows.length ? `<div class="object-rows">${rows.map(i => {
         const month = estimateMonth(i, selectedMonth);
         const scopeNote = !range().some(m => occurs(i, m)) ? ' · Ngoài kỳ dự báo · lịch vẫn được lưu' : i.recurrence.anchor < plan.startMonth || i.recurrence.end > plan.endMonth ? ' · Chỉ tính phần lịch trong kỳ dự báo' : '';
         return `<div class="detail-row"><div><strong>${h(i.name)}</strong><p>${h(i.description)}</p><small>${h(schedule(i))}${h(scopeNote)}${i.status === 'tentative' ? ' · Đang cân nhắc' : ''}</small></div><div class="row-actions">${button(h(money(plannedAmount(i, month))), 'item', `data-id="${h(i.id)}" data-month="${month}" data-mutate`, 'amount-button')}${button('Sửa chi tiết', 'item', `data-id="${h(i.id)}" data-mutate`, 'small')}${button('Xóa', 'delete-item', `data-id="${h(i.id)}" data-mutate aria-label="Xóa ${h(i.name)}"`, 'small danger')}</div></div>`;
       }).join('')}</div>` : '<p class="empty">Chưa có khoản chi. Ghi điều cần chuẩn bị trước, chưa cần biết tiền.</p>'}
-      <footer class="object-footer">${button(`＋ Thêm chi tiết ${expense ? 'chi' : 'thu'}`, 'item', `data-kind="${kind}" data-object="${h(o.id)}" data-mutate`, 'text')}<span class="object-meta">Không ghi thực tế</span></footer></article>`;
+      <footer class="object-footer">${button(`＋ Thêm chi tiết ${expense ? 'chi' : 'thu'}`, 'item', `data-kind="${kind}" data-object="${h(o.id)}" data-mutate`, 'text')}<span class="object-meta">Không ghi thực tế</span></footer></div></article>`;
     }).join('') || '<p class="empty panel">Chưa có đối tượng phù hợp. Tạo đối tượng hoặc thêm khoản thu để bắt đầu.</p>'}</section>`;
 }
 function calendarPage() {
@@ -112,15 +138,19 @@ function calendarPage() {
     <div class="controls"><h2>${data.length} tháng · ${label(plan.startMonth)} → ${label(plan.endMonth)}</h2><div class="segmented" role="group" aria-label="Kiểu hiển thị">${button('Bảng chi tiết', 'table', `aria-pressed="${table}"`)}${button('Thẻ tháng', 'cards', `aria-pressed="${!table}"`)}</div></div>${table ? forecastTable(data) : forecastCards(data)}`;
 }
 function forecastTable(data) {
-  const row = (title, key, klass = 'total-row') => `<tr class="${klass}"><th scope="row" class="row-label">${title}</th>${data.map(m => `<td>${h(['income', 'expense'].includes(key) ? flowText(m, key) : money(m[key]))}${key === 'opening' ? `<span class="sub">${m.reset ? 'Mốc tài khoản mới' : 'Chuyển từ tháng trước'}${m.openingIncomplete ? ' · chưa đủ dữ liệu' : ''}</span>` : key === 'closing' ? `<span class="sub">${m.incomplete ? 'Chưa đủ dữ liệu' : 'Đã biết'}${m.closing < 0 ? ' · Số dư âm' : ''}</span>` : ''}</td>`).join('')}</tr>`;
-  const section = type => `<tr class="section-row"><th scope="row" class="row-label">${type === 'income' ? 'THU DỰ KIẾN' : 'CHI DỰ KIẾN'}</th>${data.map(() => '<td></td>').join('')}</tr>` +
-    plan.objects.filter(o => plan.items.some(i => i.objectId === o.id && i.type === type)).map(o => {
-      const items = plan.items.filter(i => i.objectId === o.id && i.type === type);
-      return `<tr class="group-row"><th scope="row" class="row-label">${h(objectLabel(o))}</th>${data.map(m => `<td>${h(sumText(sumItems(items, m.month)))}</td>`).join('')}</tr>` + items.map(i => `<tr><th scope="row" class="row-label detail-label">${h(i.name)}</th>${data.map(m => `<td>${!occurs(i, m.month) ? '—' : i.status === 'tentative' && !tentative ? 'Không tính' : button(h(money(plannedAmount(i, m.month))), 'item', `data-id="${h(i.id)}" data-month="${m.month}" data-mutate aria-label="${h(i.name)}: sửa từ ${label(m.month)}"`, 'cell-edit')}</td>`).join('')}</tr>`).join('');
-    }).join('');
+  const row = (title, key, klass = 'total-row') => `<tbody><tr class="${klass}"><th scope="row" class="row-label">${title}</th>${data.map(m => `<td>${h(['income', 'expense'].includes(key) ? flowText(m, key) : money(m[key]))}${key === 'opening' ? `<span class="sub">${m.reset ? 'Mốc tài khoản mới' : 'Chuyển từ tháng trước'}${m.openingIncomplete ? ' · chưa đủ dữ liệu' : ''}</span>` : key === 'closing' ? `<span class="sub">${m.incomplete ? 'Chưa đủ dữ liệu' : 'Đã biết'}${m.closing < 0 ? ' · Số dư âm' : ''}</span>` : ''}</td>`).join('')}</tr></tbody>`;
+  const section = type => {
+    const sectionId = `calendar-${type}-groups`, key = `section:${type}`;
+    const groups = plan.objects.filter(o => plan.items.some(i => i.objectId === o.id && i.type === type));
+    return `<tbody><tr class="section-row"><th scope="row" class="row-label">${collapseButton(key, type === 'income' ? 'THU DỰ KIẾN' : 'CHI DỰ KIẾN', sectionId)}</th>${data.map(() => '<td></td>').join('')}</tr></tbody><tbody id="${sectionId}" ${hiddenGroup(key)}>` + groups.map((o, index) => {
+      const items = plan.items.filter(i => i.objectId === o.id && i.type === type), groupKey = `calendar:${type}:${o.id}`;
+      const ids = items.map((_, n) => `calendar-${type}-${index}-detail-${n}`);
+      return `<tr class="group-row"><th scope="row" class="row-label">${collapseButton(groupKey, objectLabel(o), ids.join(' '))}</th>${data.map(m => `<td>${h(sumText(sumItems(items, m.month)))}</td>`).join('')}</tr>` + items.map((i, n) => `<tr id="${ids[n]}" ${hiddenGroup(groupKey)}><th scope="row" class="row-label detail-label">${h(i.name)}</th>${data.map(m => `<td>${!occurs(i, m.month) ? '—' : i.status === 'tentative' && !tentative ? 'Không tính' : button(h(money(plannedAmount(i, m.month))), 'item', `data-id="${h(i.id)}" data-month="${m.month}" data-mutate aria-label="${h(i.name)}: sửa từ ${label(m.month)}"`, 'cell-edit')}</td>`).join('')}</tr>`).join('');
+    }).join('') + '</tbody>';
+  };
   return `<div class="panel"><div class="table-scroll" tabindex="0" role="region" aria-label="Bảng tháng, cuộn ngang để xem thêm"><table class="calendar-table"><thead><tr><th scope="col" class="row-label">Nội dung / đối tượng · VND</th>${data.map(m => `<th scope="col">${label(m.month)}</th>`).join('')}</tr></thead><tbody>
-    ${plan.accounts.map(a => `<tr><th scope="row" class="row-label">${h(a.name)} · Số dư tham chiếu</th>${data.map(m => { const s = latestSnapshot(plan.snapshots, a.id, m.month); return `<td>${s ? `${h(money(s.amount))}<span class="sub">${s.date}${s.date.slice(0, 7) < m.month ? ' · Mốc cũ' : ''}</span>` : 'Chưa biết'}</td>`; }).join('')}</tr>`).join('')}
-    ${row('Số dư bắt đầu tính tháng', 'opening')}${section('income')}${row('Tổng thu dự kiến', 'income')}${section('expense')}${row('Tổng chi dự kiến', 'expense')}${row('Chênh lệch kế hoạch', 'net')}${row('Số dư dự kiến cuối tháng', 'closing', 'balance-row')}</tbody></table></div></div>`;
+    ${plan.accounts.map(a => `<tr><th scope="row" class="row-label">${h(a.name)} · Số dư tham chiếu</th>${data.map(m => { const s = latestSnapshot(plan.snapshots, a.id, m.month); return `<td>${s ? `${h(money(s.amount))}<span class="sub">${s.date}${s.date.slice(0, 7) < m.month ? ' · Mốc cũ' : ''}</span>` : 'Chưa biết'}</td>`; }).join('')}</tr>`).join('')}</tbody>
+    ${row('Số dư bắt đầu tính tháng', 'opening')}${section('income')}${row('Tổng thu dự kiến', 'income')}${section('expense')}${row('Tổng chi dự kiến', 'expense')}${row('Chênh lệch kế hoạch', 'net')}${row('Số dư dự kiến cuối tháng', 'closing', 'balance-row')}</table></div></div>`;
 }
 function forecastCards(data) {
   let year = '';
@@ -139,7 +169,7 @@ function accountsPage(debt) {
   return heading(TITLES[debt ? 'debts' : 'accounts'], debt ? 'Hai hướng riêng: mình nợ và người khác nợ mình. Số dư nợ không phải tiền sẵn có; kế hoạch trả / thu hồi không tự giảm dư nợ.' : 'Số dư có ngày tham chiếu, không phải sổ giao dịch. Số dư tháng sau không áp dụng ngược về tháng trước.', button(debt ? '＋ Tạo tài khoản công nợ' : '＋ Thêm tài khoản', 'account', `data-debt="${debt}" data-mutate`, 'primary')) +
     `<div class="summary-grid">${debt ? stat('Mình đang nợ', sumText(debtTotal(plan, 'payable', selectedMonth)), 'Không trừ khỏi tiền sẵn có.', 'negative') + stat('Người khác nợ mình', sumText(debtTotal(plan, 'receivable', selectedMonth)), 'Chưa cộng vào tiền sẵn có.', 'highlight') : stat('Tổng số dư tham chiếu', sumText(cashBaseline(plan, selectedMonth)), 'Mỗi tài khoản chỉ lấy mốc mới nhất phù hợp.', 'highlight')}${stat('Tài khoản', accounts.length, 'Thiếu số dư là chưa biết, không phải 0.')}${stat('Ngày hôm nay', todayISO(), 'Asia/Ho_Chi_Minh · không nhập số dư tương lai.')}</div>${controls()}
     ${debt ? group(accounts.filter(a => a.direction === 'payable'), 'Mình đang nợ') + group(accounts.filter(a => a.direction === 'receivable'), 'Người khác nợ mình') : group(accounts, 'Các tài khoản')}
-    <h2>Lịch sử số dư theo ngày</h2><div class="panel history-scroll" tabindex="0" role="region" aria-label="Lịch sử số dư"><table class="history-table"><thead><tr><th scope="col">Ngày</th><th scope="col">Tài khoản</th><th scope="col">Số dư</th><th scope="col">Sửa mốc</th></tr></thead><tbody>${[...snapshots].sort((a, b) => b.date.localeCompare(a.date)).map(s => `<tr><td>${s.date}</td><td>${h(accounts.find(a => a.id === s.accountId).name)}</td><td>${h(money(s.amount))}</td><td>${button('Sửa', 'snapshot', `data-id="${h(s.accountId)}" data-date="${s.date}" data-debt="${debt}" data-mutate`, 'small')}</td></tr>`).join('') || '<tr><td colspan="4">Chưa có mốc số dư.</td></tr>'}</tbody></table></div>`;
+    <div class="section-heading"><h2>Lịch sử số dư theo ngày · ${snapshots.length} mốc</h2>${collapseButton(`history:${debt ? 'debts' : 'accounts'}`, 'lịch sử số dư', debt ? 'debt-history' : 'account-history', 'Chi tiết lịch sử')}</div><div id="${debt ? 'debt-history' : 'account-history'}" ${hiddenGroup(`history:${debt ? 'debts' : 'accounts'}`)} class="panel history-scroll" tabindex="0" role="region" aria-label="Lịch sử số dư"><table class="history-table"><thead><tr><th scope="col">Ngày</th><th scope="col">Tài khoản</th><th scope="col">Số dư</th><th scope="col">Sửa mốc</th></tr></thead><tbody>${[...snapshots].sort((a, b) => b.date.localeCompare(a.date)).map(s => `<tr><td>${s.date}</td><td>${h(accounts.find(a => a.id === s.accountId).name)}</td><td>${h(money(s.amount))}</td><td>${button('Sửa', 'snapshot', `data-id="${h(s.accountId)}" data-date="${s.date}" data-debt="${debt}" data-mutate`, 'small')}</td></tr>`).join('') || '<tr><td colspan="4">Chưa có mốc số dư.</td></tr>'}</tbody></table></div>`;
 }
 const field = (title, control, note = '', full = false) => `<label class="field ${full ? 'full' : ''}"><span>${title}</span>${control}${note ? `<small>${note}</small>` : ''}</label>`;
 const amountField = (value = null, required = false) => field(required ? 'Số dư' : 'Ước tính mỗi lần', `<input name="amount" type="text" inputmode="text" maxlength="60" data-amount ${required ? 'required' : ''} value="${h(formatAmountInput(value))}" placeholder="${required ? 'Nhập số dư' : 'Chưa biết — nhập sau'}"><output class="amount-preview" aria-live="polite"></output>`, 'Mặc định nghìn: 5 = 5.000 ₫; 5tr / 5M = 5 triệu; 5 trăm = 500.000 ₫. Ghi VND để nhập nguyên đồng.');
@@ -308,6 +338,8 @@ document.addEventListener('change', e => {
 document.addEventListener('click', e => {
   const close = e.target.closest('[data-close]'); if (close) { close.closest('dialog').close(); return; }
   const nav = e.target.closest('[data-view]'); if (nav) { view = nav.dataset.view; render(); return; }
+  const disclosure = e.target.closest('[data-collapse], [data-collapse-all]');
+  if (disclosure) { toggleCollapse(disclosure); return; }
   const target = e.target.closest('[data-action]'); if (!target) return;
   const { action, id, kind, object, month, debt, date } = target.dataset;
   if (target.hasAttribute('data-mutate') && blocked()) return;

@@ -44,6 +44,12 @@ Node logs are ephemeral `/tmp/ms001-final-{model,server,deployment,all}.log`; fi
 
 Inspected actual Chrome screenshots of desktop calendar, mobile expense objects/details and mobile month detail. Observed year-visible chronological columns, separately grouped flows and explicit unknown labels, contained scrolling, readable parsed/maximum values, stacked narrow-screen controls/cards and labeled native month dialog. This is agent observation of synthetic data, **not Sinh's UAT** or an accessibility certification.
 
+## Confirmed follow-up: collapse overall/detail views
+
+Sinh selected all four requested locations: Income/Expense object cards, calendar object groups, whole calendar income/expense sections and cash/debt history. Implemented page-local view controls plus workspace-scoped collapse-all/expand-all, keeping names/counts/monthly totals and account/section balances visible. Nested group state survives a parent section toggle. Native keyboard buttons expose expanded/control relationships; focus and contained table scroll positions survive rerenders. A full reload resets disclosure choices; no schema, financial export, save or calculation change.
+
+Local syntax/diff checks and **69/69 Node tests** passed. Isolated browser run: **18 groups/96 axe scans**, zero detected violations/page errors/external requests. Added five-width checks for all four locations, nested state, preserved unknown/partial totals, Enter/Space/focus/scroll behavior, valid control targets, zero PUT requests and byte-for-field unchanged server envelope/revision. Inspected synthetic collapsed mobile Expense and desktop Calendar screenshots. Ephemeral artifacts: `/tmp/ms-001-browser.ByraBN/`; Node log `/tmp/ms001-collapse-tests.log`. Source/tests only at this checkpoint; live stack update requires a separate restart decision. Human UAT remains Not run.
+
 ## Confirmed follow-up: schedules independent of forecast windows
 
 Sinh confirmed: save the full income/expense schedule independently, forecast only overlapping months, and do not automatically extend the forecast. This supersedes only the old window-exclusion rejection; supported dates, history validation, arithmetic and data preservation remain. Active v3 schema is unchanged; no plan migration is needed. Saved schedules may span more than120 months within2000–2100, while each forecast remains1–120 months.

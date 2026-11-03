@@ -221,6 +221,17 @@ p, h1, h2, h3, small, .button { overflow-wrap: anywhere; }
 .month-card dl { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .month-card dd { min-width: 0; overflow-wrap: anywhere; }
 .dialog-body { overflow-wrap: anywhere; }
+.collapse-tools, .object-management { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.object-management { padding: 4px 21px 12px; }
+.collapse-toggle { display: inline-block; border: 0; background: transparent; color: var(--green); font: inherit; font-weight: 600; text-align: left; padding: 6px 2px; min-height: 34px; max-width: 100%; line-height: 1.5; overflow-wrap: anywhere; }
+.collapse-toggle::before { content: '▾'; margin-right: .45em; }
+.collapse-toggle[aria-expanded=false]::before { content: '▸'; }
+.collapse-toggle:hover { text-decoration: underline; }
+.object-title .collapse-toggle { padding-top: 0; padding-bottom: 0; font-weight: inherit; }
+.collapsible-object .object-total { display: block; flex-shrink: 1; min-width: 0; }
+.collapsible-object .object-identity { flex: 1 1 180px; flex-wrap: nowrap; }
+.collapsible-object .object-identity > div { min-width: 0; }
+@media (max-width: 760px) { .collapsible-object .object-total { width: 100%; max-width: none; text-align: left; } .object-management { padding-left: 16px; padding-right: 16px; } }
 input[type=checkbox] { accent-color: var(--green); }
 #save-recovery { margin-bottom: 18px; }
 @media (max-width: 760px) { .detail-row { display: block; padding: 16px; } .row-actions { justify-content: flex-start; margin-top: 12px; } .object-footer { flex-wrap: wrap; } .object-header { flex-wrap: wrap; } .account-card { min-width: 0; } .navigation { gap: 0; } .nav-link { font-size: 11px; } .month-card .closing { font-size: 21px; } }

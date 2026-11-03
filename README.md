@@ -16,6 +16,17 @@ MS-001's four implementation phases are now committed on its feature branch foll
 
 Types differ only by labeled icons, not permissions/calculations. Shared renames apply across income/expenses. Equal-looking names have distinct IDs; there is no implicit merge. Referenced objects cannot be deleted until details are explicitly moved or removed. Account histories cannot be silently deleted.
 
+## Overall view and details
+
+Use the arrow/name controls to collapse or expand:
+
+- Income/expense object cards: keep name, type, entry count and monthly total visible; hide individual entries/actions.
+- Calendar object groups: keep each object's monthly totals while hiding its detail rows.
+- Calendar income/expense sections: hide the whole section's groups/details while its overall monthly totals and closing cash remain visible.
+- Cash/debt history: hide dated records while account cards and balance totals stay visible.
+
+**Thu gọn tất cả / Mở rộng tất cả** applies to the current workspace. Nested group choices survive closing/reopening a calendar section. Controls support keyboard Enter/Space and announce expanded state. Choices remain during page navigation/rerenders, reset on a full reload, and are never financial edits: no save request, revision change, forecast change or exported preference. Unknown/partial totals remain labeled even when collapsed.
+
 ## Amounts and calculations
 
 All stored amounts are exact integer VND, at most 1 trillion per field. Blank planned amount = **unknown**, not zero. Cash/debt snapshots require a known amount; zero is valid.
