@@ -56,9 +56,13 @@ Do not export/share Caddy's entire directory: it contains the private CA key. It
 
 ## Current v3 update (2026-11-03, explicitly requested)
 
+**Latest update:** separately confirmed full-schedule/overlapping-forecast behavior (`b474963`) was rebuilt and deployed. All six served HTML/JS/CSS assets match that checkout over CA-verified HTTPS; unauthenticated finance/session endpoints return401/no-store. Existing private mounts were retained, with no authenticated finance access/migration. The old3080 container ID/image/start time remained unchanged.
+
+**Operational caveat:** the OCI `procReady` health-check failure recurred after the earlier `GOMAXPROCS=2` adjustment. Docker reported60 container tasks while the Caddy process had8 threads, so the original concurrency explanation is not a proven root cause or durable fix. Restarting only local Caddy restored healthy native probes; both services were healthy at verification. No PID/security limits were relaxed. Further host/runtime investigation is separate; do not treat a short healthy check as long-term resolution.
+
 Following Sinh's request to update the local stack, rebuilt the current app and recreated only the `money-seasons-local-test` services as needed. Both web and Caddy are healthy at **https://localhost:3081**. Existing private data/passphrase/CA mounts were retained; no login, finance read, plan replacement or migration was performed. A legacy plan may still require the explicit preserved-original conversion after you log in.
 
-The first update exposed the pre-existing unhealthy Caddy probe (`procReady not received`): Caddy had60 tasks under its64-PID limit. Set `GOMAXPROCS=2` for the local Caddy service to leave headroom without relaxing the PID/capability/security limits. After recreation, Caddy used11 tasks and its native probes passed. The configuration regression now asserts both the concurrency bound and retained64-PID limit.
+The first update exposed the pre-existing unhealthy Caddy probe (`procReady not received`): the Caddy container reported60 tasks under its64-PID limit. Set `GOMAXPROCS=2` for the local Caddy service to leave headroom without relaxing the PID/capability/security limits. After recreation, Caddy used11 tasks and its native probes passed. The configuration regression now asserts both the concurrency bound and retained64-PID limit.
 
 Verified the real local-CA HTTPS chain, `/healthz` version0.3.0, byte equality of all six deployed HTML/JS/CSS assets against the checkout, and unauthenticated401/no-store responses for plan/export/session. No certificate-validation bypass or host trust/Tailscale/firewall changes. All64 Node tests passed after the configuration adjustment. The old port3080 container retained exactly its pre-update ID, image and start time. This is local-stack update evidence, not human UAT or real-family access acceptance.
 
