@@ -16,6 +16,19 @@ test('Docker retains private loopback publication, read-only root, restricted pe
   assert.doesNotMatch(compose, /5432|funnel|network_mode:\s*host|privileged:\s*true/i);
 });
 
+test('public demo module ships with model in image context without adding runtime dependencies or seeding', async () => {
+  const docker = await readFile('Dockerfile', 'utf8'), ignore = await readFile('.dockerignore', 'utf8');
+  assert.match(docker, /^COPY --chown=node:node public \.\/public$/m); assert.ok(ignore.includes('!public/**'));
+  const pkg = JSON.parse(await readFile('package.json', 'utf8')); assert.deepEqual(pkg.dependencies ?? {}, {});
+  const model = await readFile('public/model.js', 'utf8'), demo = await readFile('public/demo-data.js', 'utf8');
+  assert.match(model, /import .* from '\.\/demo-data\.js'/);
+  assert.doesNotMatch(demo, /\b(?:import|fetch|XMLHttpRequest|localStorage|process|Date)\s*[.(]/);
+  assert.match(demo, /Dữ liệu hư cấu/);
+  const app = await readFile('public/app.js', 'utf8');
+  assert.match(app, /if \(action === 'demo'\) confirmChange/);
+  assert.equal((app.match(/demoPlan\(\)/g) ?? []).length, 1); // Only the explicit confirmed action.
+});
+
 test('production startup fails closed without private config; no insecure-cookie environment switch', async () => {
   const result = spawnSync(process.execPath, ['server.mjs'], { env: { PATH: process.env.PATH, MONEY_SEASONS_INSECURE: '1' }, encoding: 'utf8', timeout: 10_000 });
   assert.equal(result.status, 1); assert.match(result.stderr, /Startup refused/);

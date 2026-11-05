@@ -8,7 +8,7 @@ import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { PASSPHRASE } from './fixture-support.mjs';
-import { blankPlan, forecast, validatePlan } from '../public/model.js';
+import { blankPlan, demoPlan, forecast, validatePlan } from '../public/model.js';
 import { demoPlan as legacyDemo } from '../public/legacy-model.js';
 import { debtFixture } from './debt-fixture.mjs';
 if (process.env.BASE_URL) throw new Error('Refusing BASE_URL: browser checks own an isolated synthetic child server.');
@@ -18,14 +18,17 @@ await mkdir(artifacts, { recursive: true, mode: 0o700 });
 console.log(`Synthetic browser artifacts: ${artifacts}`);
 const child = fork(new URL('./browser-server.mjs', import.meta.url), [], { stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
 let browser, base, page;
-const results = [], errors = [], external = [], scans = [], responseLedger = [], failedRequests = [];
+const results = [], errors = [], external = [], scans = [], responseLedger = [], failedRequests = [], planWrites = [];
 const timeout = setTimeout(() => { child.kill('SIGTERM'); process.exitCode = 1; }, 360000);
 const check = async (name, action) => { await action(); results.push(name); console.log(`PASS ${name}`); };
 function watch(p) {
   p.on('pageerror', e => errors.push(e.message));
   p.on('response', r => { if (r.status() >= 400) responseLedger.push({ path: new URL(r.url()).pathname, status: r.status() }); });
   p.on('requestfailed', r => failedRequests.push({ path: new URL(r.url()).pathname, error: r.failure().errorText }));
-  p.on('request', r => { if (!r.url().startsWith(base + '/') && !r.url().startsWith('blob:')) external.push(r.url()); });
+  p.on('request', r => {
+    if (!r.url().startsWith(base + '/') && !r.url().startsWith('blob:')) external.push(r.url());
+    if (r.method() === 'PUT' && new URL(r.url()).pathname === '/api/plan') planWrites.push(r.url());
+  });
 }
 const visible = (p, selector) => p.locator(selector).waitFor({ state: 'visible' });
 const snapshot = p => p.evaluate(async () => (await fetch('/api/plan')).json());
@@ -58,6 +61,8 @@ async function importPlan(p, plan) {
   await p.locator('#import-file').setInputFiles({ name: 'synthetic.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(plan)) });
   await confirm(p); await saved(p, before);
 }
+async function requestDemo(p) { await p.locator('#help-button').click(); await p.locator('[data-action=demo]').click(); await visible(p, '#confirm-dialog'); }
+async function resetDemo(p) { const before = (await snapshot(p)).revision; await requestDemo(p); await confirm(p); await saved(p, before); }
 async function object(p, name, type = 'person') {
   await p.locator('[data-action=object]:not([data-id])').click();
   await p.locator('#edit-form [name=name]').fill(name); await p.locator('[name=objectType]').selectOption(type); await submit(p);
@@ -85,6 +90,7 @@ try {
     await page.locator('[name=passphrase]').fill('wrong-synthetic'); await page.locator('#login-form button').click(); await visible(page, '#login-error');
     await page.locator('[name=passphrase]').fill(PASSPHRASE); await page.locator('#login-form button').click(); await visible(page, '#application');
     assert.equal((await snapshot(page)).plan, null); assert.equal(await page.locator('.calendar-table thead th').count(), 15);
+    assert.deepEqual(planWrites, []);
   });
   await check('explicit setup, default 14-month chronology, safe invalid window', async () => {
     await page.locator('#settings-button').click(); await axe(page, 'setup');
@@ -232,6 +238,82 @@ try {
     await page.locator('#import-file').setInputFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('{broken') }); await visible(page, '#toast'); assert.deepEqual(await snapshot(page), state);
     await page.locator('#import-file').setInputFiles({ name: 'cancel.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(blankPlan())) }); await cancelConfirm(page); assert.deepEqual(await snapshot(page), state);
     await importPlan(page, exported); assert.deepEqual((await snapshot(page)).plan, exported);
+  });
+  await check('family sample cancel sends zero PUT; confirmed replacement persists exact seed after reload', async () => {
+    const before = await snapshot(page), writes = planWrites.length;
+    await requestDemo(page); await cancelConfirm(page); await close(page);
+    assert.equal(planWrites.length, writes); assert.deepEqual(await snapshot(page), before);
+    await resetDemo(page); assert.deepEqual((await snapshot(page)).plan, demoPlan());
+    const loaded = await snapshot(page), afterSave = planWrites.length;
+    await page.reload(); await visible(page, '#application');
+    assert.deepEqual(await snapshot(page), loaded); assert.equal(planWrites.length, afterSave);
+    assert.equal(await page.locator('#plan-title').textContent(), 'Gia đình mẫu Minh – Lan · 11 / 2026–12 / 2027');
+    const asset = await page.request.get(base + '/demo-data.js'); assert.equal(asset.status(), 200); assert.match(asset.headers()['content-type'], /javascript/);
+  });
+  await check('family sample five-workspace learning totals, unknown/zero and tentative comparison without writes', async () => {
+    await nav(page, 'calendar');
+    for (const [month, expected] of [
+      ['2026-11', ['50.000.000 ₫', '43.000.000 ₫', '34.400.000 ₫', '58.600.000 ₫']],
+      ['2026-12', ['58.600.000 ₫', '43.500.000 ₫', '28.400.000 ₫ + ? (chưa biết)', '73.700.000 ₫']],
+      ['2027-01', ['73.700.000 ₫', '43.000.000 ₫', '28.700.000 ₫', '88.000.000 ₫']]
+    ]) {
+      await page.locator('#view-month').selectOption(month);
+      assert.deepEqual(await page.locator('.summary-grid .stat-value').allTextContents(), expected);
+      if (month !== '2026-11') assert.ok((await page.locator('.summary-grid').textContent()).includes('chưa đủ dữ liệu'));
+    }
+    const before = await snapshot(page), writes = planWrites.length;
+    await page.locator('#view-month').selectOption('2027-06');
+    assert.equal(await page.locator('.summary-grid .stat-value').nth(2).textContent(), '28.700.000 ₫');
+    await page.locator('#include-tentative').check();
+    assert.equal(await page.locator('.summary-grid .stat-value').nth(2).textContent(), '36.700.000 ₫');
+    await page.locator('#include-tentative').uncheck();
+    assert.equal(await page.locator('.summary-grid .stat-value').nth(2).textContent(), '28.700.000 ₫');
+    for (const width of [320, 1440]) {
+      await page.setViewportSize({ width, height: 1000 });
+      for (const view of ['calendar', 'expense', 'income', 'accounts', 'debts']) {
+        await nav(page, view); await page.locator('#view-month').selectOption('2026-11');
+        await overflow(page); await axe(page, `family-${view}-${width}`);
+        if (view === 'expense') {
+          assert.equal(await page.locator('.object-card').count(), 9);
+          assert.equal(await page.locator('[data-id="free-activity"].amount-button').textContent(), '0 ₫');
+          assert.equal(await page.locator('[data-id="dental"].amount-button').textContent(), 'Chưa biết');
+        }
+        if (view === 'income') assert.equal(await page.locator('.object-card').count(), 2);
+        if (view === 'accounts') {
+          assert.equal(await page.locator('.history-table tbody tr').count(), 3);
+          assert.deepEqual(await page.locator('.account-balance').allTextContents(), ['3.000.000 ₫', '47.000.000 ₫']);
+        }
+        if (view === 'debts') assert.deepEqual((await page.locator('.summary-grid .stat-value').allTextContents()).slice(0, 2), ['30.000.000 ₫', '3.000.000 ₫']);
+        await page.screenshot({ path: path.join(artifacts, `family-${view}-${width}.png`), fullPage: true });
+      }
+    }
+    assert.equal(planWrites.length, writes); assert.deepEqual(await snapshot(page), before);
+  });
+  await check('family sample edit/export/import is lossless and explicit reset restores original not merge', async () => {
+    await nav(page, 'expense'); await page.locator('[data-id="minh-lunch"].amount-button').click();
+    await page.locator('[name=effectiveMonth]').fill('2026-11'); await page.locator('[name=amount]').fill('1300000 VND'); await submit(page, true);
+    const edited = (await snapshot(page)).plan;
+    assert.deepEqual(edited.items.find(i => i.id === 'minh-lunch').amountChanges, [{ month: '2026-11', amount: 1300000 }]);
+    const event = page.waitForEvent('download'); await page.locator('#export-button').click();
+    const file = path.join(artifacts, 'family-edited-export.json'); await (await event).saveAs(file);
+    const exported = JSON.parse(await readFile(file, 'utf8')); assert.deepEqual(exported, edited);
+    await importPlan(page, exported); assert.deepEqual((await snapshot(page)).plan, edited);
+    assert.equal(demoPlan().items.find(i => i.id === 'minh-lunch').amount, 1200000);
+    await resetDemo(page); assert.deepEqual((await snapshot(page)).plan, demoPlan());
+  });
+  await check('stale family sample replacement refuses overwrite and preserves newer plan for explicit recovery', async () => {
+    const other = await context.newPage(); watch(other); await other.goto(base); await visible(other, '#application');
+    const newer = { ...demoPlan(), name: 'Synthetic newer family plan' }; assert.equal(await put(other, newer), 200);
+    const serverState = await snapshot(other);
+    await requestDemo(page); await confirm(page);
+    await page.waitForFunction(() => document.querySelector('#save-status').textContent.startsWith('CHƯA LƯU'));
+    assert.deepEqual(await snapshot(page), serverState); await close(page);
+    const event = page.waitForEvent('download'); await page.locator('#export-button').click();
+    assert.ok((await event).suggestedFilename().includes('UNSAVED'));
+    await page.locator('#reconcile-button').click(); assert.equal(await page.locator('#retry-button').isVisible(), false);
+    await page.locator('#reload-button').click(); await confirm(page);
+    await page.waitForFunction(() => document.querySelector('#plan-title').textContent.startsWith('Synthetic newer family plan'));
+    await other.close(); await resetDemo(page); assert.deepEqual((await snapshot(page)).plan, demoPlan());
   });
   await check('legacy migration retains original actuals and discloses exclusion before confirm', async () => {
     const old = legacyDemo();
