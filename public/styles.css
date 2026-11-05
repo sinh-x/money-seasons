@@ -250,9 +250,16 @@ input[type=checkbox] { accent-color: var(--green); }
 .expense-toolbar .controls { margin: 0; }
 .month-context { padding: 16px; border-radius: 12px; background: var(--leaf); }
 .field .toggle input { width: 16px; min-width: 16px; padding: 0; flex: 0 0 16px; }
-.tag-row { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
-.tag-fields { display: grid; gap: 10px; margin-bottom: 10px; }
-[data-tag-value-fields] { display: grid; gap: 10px; }
+.expense-tag-bundle { border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: var(--soft); gap: 12px; }
+.expense-tag-bundle h3 { margin: 0; }
+#expense-tag-rows { display: grid; gap: 12px; }
+#expense-tag-rows:empty { display: none; }
+.tag-row { display: grid; grid-template-columns: minmax(0, 1fr) 30px; gap: 8px; align-items: start; }
+.tag-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; min-width: 0; }
+.tag-key-fields, [data-tag-value-fields] { display: grid; gap: 8px; min-width: 0; }
+.tag-fields .field input, .tag-fields .field select { padding: 10px 6px; }
+.remove-tag { margin-top: 23px; padding: 0; min-height: 38px; font-size: 18px; }
+.expense-tag-bundle [data-add-tag] { justify-self: start; }
 [data-money-only] { min-width: 0; }
 @media (max-width: 760px) { .grouping-slots { grid-template-columns: 1fr; } .expense-children { padding: 0 6px 8px; } .expense-group .object-header { padding: 12px; } .expense-group .detail-row { padding: 12px; } .month-context { align-items: flex-start; } }
 @media print { .sidebar, .top-actions, .heading-actions, .button, .toast { display: none; } .shell, .workspace { display: block; } .table-scroll { overflow: visible; max-height: none; } main { padding: 10px; } }

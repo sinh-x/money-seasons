@@ -201,11 +201,25 @@ export async function expenseBrowserChecks({ page, context, base, watch, check, 
       for (const visible of [false, true]) { await show(visible); await overflow(page); await axe(page, `ms004-nested-${width}-${visible}`); }
       if ([320, 1440].includes(width)) { await page.evaluate(() => scrollTo(0, 0)); await page.screenshot({ path: path.join(artifacts, `ms004-nested-${width}.png`) }); }
       const source = page.locator('[data-action=item][data-kind=expense]:not([data-object])').first(); await source.click(); await page.locator('[name=name]').fill('Keyboard draft');
-      await addNewTag('A long synthetic key for mobile', 'A long synthetic value for mobile'); await overflow(page); await axe(page, `ms004-tag-form-${width}`);
+      await addNewTag('A long synthetic key for mobile', 'A long synthetic value for mobile');
+      await page.locator('[data-add-tag]').click(); const secondTag = page.locator('[data-tag-row]').last();
+      await secondTag.locator('[data-tag-key]').selectOption(category.id); await secondTag.locator('[data-tag-value]').selectOption(category.values[0].id);
+      assert.equal(await page.locator('.expense-tag-bundle').count(), 1);
+      assert.equal(await page.locator('.expense-tag-bundle > #expense-tag-rows > [data-tag-row]').count(), 2);
+      for (const row of await page.locator('[data-tag-row]').all()) {
+        const keyBox = await row.locator('[data-tag-key]').boundingBox(), valueBox = await row.locator('[data-tag-value]').boundingBox();
+        assert.ok(Math.abs(keyBox.y - valueBox.y) <= 1, `key/value share one row at ${width}px`);
+        assert.ok(keyBox.x + keyBox.width <= valueBox.x && keyBox.width > 40 && valueBox.width > 40);
+        assert.equal(await row.evaluate(e => getComputedStyle(e).borderTopWidth), '0px', 'one shared bundle, not separate tag cards');
+      }
+      await overflow(page); await axe(page, `ms004-tag-form-${width}`);
       if ([320, 1440].includes(width)) {
         await page.locator('#editor').evaluate(e => { e.scrollTop = 0; }); await page.screenshot({ path: path.join(artifacts, `ms004-tag-form-${width}.png`) });
         await page.locator('#editor').evaluate(e => { e.scrollTop = e.scrollHeight; }); await page.screenshot({ path: path.join(artifacts, `ms004-tag-rows-${width}.png`) });
       }
+      await secondTag.locator('[data-remove-tag]').focus(); await page.keyboard.press('Enter');
+      assert.equal(await page.locator('[data-tag-row]').count(), 1);
+      assert.equal(await page.locator('[data-new-value]').inputValue(), 'A long synthetic value for mobile');
       await page.keyboard.press('Escape'); assert.ok(await source.evaluate(e => e === document.activeElement));
       await page.locator('[data-action=tags]').click(); await page.locator('[name=manageKey]').selectOption(category.id); await page.locator('[name=manageValue]').selectOption(NEW_TAG);
       await overflow(page); await axe(page, `ms004-tag-manager-${width}`); await close(page);
