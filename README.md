@@ -8,6 +8,12 @@ MS-001's four implementation phases are now committed on its feature branch foll
 
 The [MS-001 wrap-up handoff](docs/ms-001-wrap-up.md) records the explicit local `develop` integration request, fresh checks and remaining operational/UAT limits. Local integration does not push code, restart services or migrate financial data.
 
+## Fictional family learning demo
+
+Explore all five workspaces with **Minh, Lan, An and Bình** using the [family demo learning guide](docs/demo-data.md). The repo-shipped sample has 9 objects and 19 entries, literal VND, fixed November 2026–December 2027 schedules, cash history and separate debts. It includes unknown, zero, tentative and forward-estimate examples.
+
+**Use a disposable synthetic instance and export before replacing.** Open **Hướng dẫn & khôi phục → Thay bằng mẫu tổng hợp…**, then explicitly confirm whole-plan replacement (or cancel with no save). Startup never seeds; confirmed reset restores the original sample, not a merge. No running service is seeded or updated by this feature.
+
 ## Five workspaces
 
 - **Lịch tài chính:** chronological monthly columns, separate income/expense groups, account reference dates, opening/closing totals; month cards/detail on narrow screens.

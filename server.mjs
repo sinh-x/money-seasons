@@ -11,6 +11,7 @@ const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/model.js', ['model.js', 'text/javascript; charset=utf-8']],
+  ['/demo-data.js', ['demo-data.js', 'text/javascript; charset=utf-8']],
   ['/legacy-model.js', ['legacy-model.js', 'text/javascript; charset=utf-8']],
   ['/amount-input.js', ['amount-input.js', 'text/javascript; charset=utf-8']],
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']],

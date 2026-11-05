@@ -1,5 +1,6 @@
 // Active v3 monthly planning model: snapshots + plans, never transactions/actuals.
 import * as legacy from './legacy-model.js';
+import { createDemoData } from './demo-data.js';
 export { MAX_AMOUNT, MAX_BYTES, MONTHS, monthIndex, monthKey, monthRange, occurs, plannedAmount } from './legacy-model.js';
 import { MAX_AMOUNT, MAX_BYTES, monthRange, monthIndex, monthKey, occurs, plannedAmount } from './legacy-model.js';
 const fail = (message = 'Kế hoạch không hợp lệ. Dữ liệu hiện tại được giữ nguyên.') => { throw new Error(message); };
@@ -157,10 +158,4 @@ export function convertLegacy(source, { confirmed = false } = {}) {
   // Opening cash has no account/reference date. Leave unknown, never fabricate a snapshot.
   return validatePlan(p);
 }
-export function demoPlan() {
-  const p = blankPlan(); p.demo = true; p.name = 'Gia đình mẫu';
-  p.objects = [{ id: 'family', type: 'group', name: 'Gia đình mẫu' }, { id: 'person', type: 'person', name: 'Thành viên A' }];
-  p.items = [{ id: 'living', objectId: 'family', name: 'Sinh hoạt', description: 'Ví dụ tổng hợp', type: 'expense', status: 'confirmed', amount: 2000,
-    recurrence: { kind: 'interval', anchor: p.startMonth, end: p.endMonth, everyMonths: 1 }, amountChanges: [] }];
-  return validatePlan(p);
-}
+export function demoPlan() { return validatePlan(createDemoData()); }
