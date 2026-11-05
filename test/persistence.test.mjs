@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { openStore } from '../persistence.mjs';
 import { blankPlan, convertLegacy, validatePlan } from '../public/model.js';
 import { blankPlan as legacyBlank } from '../public/legacy-model.js';
+import { tagLibrary } from '../public/expense-tags.js';
 
 async function fixture(t, options) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ms-store-'));
@@ -73,6 +74,31 @@ test('populated active objects, estimates, cash/debt history survive restart byt
   const reopened = await openStore(dir);
   try { assert.deepEqual(await reopened.read(), saved); assert.deepEqual((await reopened.read()).plan, p); }
   finally { await reopened.close(); }
+});
+
+test('optional tags survive restart with stable IDs; invalid or failed saves leave no partial definitions', async t => {
+  let fail = false;
+  const { store, dir } = await fixture(t, { hook: async stage => { if (fail && stage === 'before-rename') throw new Error('synthetic'); } });
+  const old = blankPlan(), first = await store.save(old, 0), filename = path.join(dir, 'plan.json');
+  const raw = await fs.readFile(filename); tagLibrary((await store.read()).plan);
+  assert.deepEqual(await fs.readFile(filename), raw); assert.deepEqual((await store.read()).plan, old);
+  const p = structuredClone(old); p.tagDefinitions = tagLibrary(p); p.objects = [{ id: 'family', name: 'Family', type: 'group' }];
+  p.items = [{ id: 'expense', objectId: 'family', name: 'Synthetic expense', description: '', type: 'expense', status: 'confirmed', amount: null,
+    recurrence: { kind: 'once', anchor: p.startMonth, end: p.startMonth, everyMonths: 1 }, amountChanges: [], tags: [{ keyId: p.tagDefinitions[0].id, valueId: p.tagDefinitions[0].values[0].id }] }];
+  fail = true; await assert.rejects(store.save(p, first.revision), e => e.status === 503);
+  assert.deepEqual(await store.read(), first); assert.deepEqual(await fs.readFile(filename), raw);
+  fail = false; const saved = await store.save(p, first.revision); assert.deepEqual(saved.plan, p);
+  await store.close(); const reopened = await openStore(dir);
+  try {
+    assert.deepEqual(await reopened.read(), saved);
+    const invalid = structuredClone(p); invalid.items[0].tags.push(invalid.items[0].tags[0]);
+    const bytes = await fs.readFile(filename);
+    await assert.rejects(reopened.save(invalid, saved.revision), e => e.status === 400);
+    await assert.rejects(reopened.save(old, first.revision), e => e.status === 409);
+    assert.deepEqual(await reopened.read(), saved); assert.deepEqual(await fs.readFile(filename), bytes);
+    const unassigned = structuredClone(p); unassigned.items[0].tags = []; unassigned.tagDefinitions = [];
+    const empty = await reopened.save(unassigned, saved.revision); assert.deepEqual(tagLibrary(empty.plan), []);
+  } finally { await reopened.close(); }
 });
 
 test('serialized expected-revision check gives one winner; stale edits do not overwrite', async t => {
