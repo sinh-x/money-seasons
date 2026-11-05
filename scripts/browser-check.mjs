@@ -11,6 +11,7 @@ import { PASSPHRASE } from './fixture-support.mjs';
 import { blankPlan, demoPlan, forecast, validatePlan } from '../public/model.js';
 import { demoPlan as legacyDemo } from '../public/legacy-model.js';
 import { debtFixture } from './debt-fixture.mjs';
+import { expenseBrowserChecks } from './expense-browser-checks.mjs';
 if (process.env.BASE_URL) throw new Error('Refusing BASE_URL: browser checks own an isolated synthetic child server.');
 const artifacts = process.env.BROWSER_ARTIFACTS || await mkdtemp(path.join(os.tmpdir(), 'ms-001-browser-'));
 if (!path.resolve(artifacts).startsWith(os.tmpdir() + path.sep)) throw new Error('Artifacts must be outside Git in a temporary directory.');
@@ -49,7 +50,7 @@ async function login(p) {
 }
 async function axe(p, name) {
   const report = await new AxeBuilder({ page: p }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
-  scans.push({ name, violations: report.violations });
+  scans.push({ name, violations: report.violations, incomplete: report.incomplete, incompleteReview: report.incomplete.length ? 'Open finding: manual accessibility review by Sinh is pending; not a passing assumption.' : 'None' });
   assert.deepEqual(report.violations.map(v => ({ id: v.id, nodes: v.nodes.map(n => ({ target: n.target, summary: n.failureSummary })) })), [], name);
 }
 async function overflow(p) {
@@ -70,8 +71,11 @@ async function object(p, name, type = 'person') {
 async function item(p, { kind = 'expense', name = 'Synthetic expense', amount = '', repeat = 'monthly', start = '2026-11', end = '2027-12', status = 'confirmed' } = {}) {
   await p.locator(`[data-action=item][data-kind="${kind}"]:not([data-object])`).first().click();
   const f = p.locator('#edit-form'); await f.locator('[name=name]').fill(name); await f.locator('[name=description]').fill('Synthetic details');
-  await f.locator('[name=amount]').fill(amount); await f.locator('[name=status]').selectOption(status); await f.locator('[name=repeat]').selectOption(repeat);
-  await f.locator('[name=start]').fill(start); await f.locator('[name=end]').fill(end); return f;
+  if (await f.locator('[data-amount-visibility]').count()) await f.locator('[data-amount-visibility]').check();
+  await f.locator('[name=amount]').fill(amount); await f.locator('[name=status]').selectOption(status);
+  if (await f.locator('[name=expenseKind]').count()) { await f.locator('[name=expenseKind]').selectOption(repeat === 'once' ? 'once' : 'interval'); if (repeat !== 'once') await f.locator('[name=repeat]').selectOption(repeat); }
+  else await f.locator('[name=repeat]').selectOption(repeat);
+  await f.locator('[name=start]').fill(start); if (repeat !== 'once') await f.locator('[name=end]').fill(end); return f;
 }
 async function put(p, plan) {
   return p.evaluate(async plan => {
@@ -167,7 +171,7 @@ try {
     assert.ok(forecast(state.plan).every(m => m.incomeMissing === 0));
     await page.locator('#settings-button').click(); await page.locator('[name=startMonth]').fill('2028-01'); await page.locator('[name=endMonth]').fill('2028-06'); await submit(page, true);
     state = await snapshot(page); assert.deepEqual(state.plan.items, fullItems); assert.ok(forecast(state.plan).every(m => m.entries.length === 0));
-    await nav(page, 'expense');
+    await nav(page, 'expense'); await page.locator('[data-action=all-expense-schedules]').click();
     const past = page.locator('.detail-row').filter({ hasText: 'Synthetic past once' });
     await past.locator('[data-action=item]').first().click(); assert.equal(await page.locator('[name=effectiveMonth]').inputValue(), '2020-01'); await submit(page);
     const long = page.locator('.detail-row').filter({ hasText: 'Synthetic long annual' });
@@ -198,6 +202,7 @@ try {
   });
   await check('manual debt repayment/collection ordinary plans, no assumed amount or balance mutation', async () => {
     await page.locator('[data-action=debt-plan]').click(); assert.equal(await page.locator('[name=amount]').inputValue(), '');
+    await page.locator('#editor [data-amount-visibility]').check();
     await page.locator('[name=amount]').fill('1'); await page.locator('[name=start]').fill('2025-12'); await submit(page);
     const state = await snapshot(page); assert.equal(state.plan.debtSnapshots[0].amount, 9000); assert.equal(forecast(state.plan)[1].closing, 6000);
     await page.locator('[data-action=account]:not([data-id])').click(); await page.locator('[name=name]').fill('Synthetic receivable'); await page.locator('[name=direction]').selectOption('receivable'); await submit(page);
@@ -274,9 +279,13 @@ try {
         await nav(page, view); await page.locator('#view-month').selectOption('2026-11');
         await overflow(page); await axe(page, `family-${view}-${width}`);
         if (view === 'expense') {
+          await page.locator('#workspace [data-amount-visibility]').check();
           assert.equal(await page.locator('.object-card').count(), 9);
           assert.equal(await page.locator('[data-id="free-activity"].amount-button').textContent(), '0 ₫');
+          assert.equal(await page.locator('[data-id="dental"].amount-button').count(), 0);
+          await page.locator('[data-action=all-expense-schedules]').click();
           assert.equal(await page.locator('[data-id="dental"].amount-button').textContent(), 'Chưa biết');
+          await page.locator('[data-action=all-expense-schedules]').click();
         }
         if (view === 'income') assert.equal(await page.locator('.object-card').count(), 2);
         if (view === 'accounts') {
@@ -290,7 +299,7 @@ try {
     assert.equal(planWrites.length, writes); assert.deepEqual(await snapshot(page), before);
   });
   await check('family sample edit/export/import is lossless and explicit reset restores original not merge', async () => {
-    await nav(page, 'expense'); await page.locator('[data-id="minh-lunch"].amount-button').click();
+    await nav(page, 'expense'); await page.locator('#workspace [data-amount-visibility]').check(); await page.locator('[data-id="minh-lunch"].amount-button').click();
     await page.locator('[name=effectiveMonth]').fill('2026-11'); await page.locator('[name=amount]').fill('1300000 VND'); await submit(page, true);
     const edited = (await snapshot(page)).plan;
     assert.deepEqual(edited.items.find(i => i.id === 'minh-lunch').amountChanges, [{ month: '2026-11', amount: 1300000 }]);
@@ -315,6 +324,7 @@ try {
     await page.waitForFunction(() => document.querySelector('#plan-title').textContent.startsWith('Synthetic newer family plan'));
     await other.close(); await resetDemo(page); assert.deepEqual((await snapshot(page)).plan, demoPlan());
   });
+  await expenseBrowserChecks({ page, context, base, watch, check, snapshot, importPlan, nav, close, submit, confirm, cancelConfirm, saved, put, axe, overflow, planWrites, artifacts });
   await check('legacy migration retains original actuals and discloses exclusion before confirm', async () => {
     const old = legacyDemo();
     await page.locator('#import-file').setInputFiles({ name: 'old.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(old)) });
@@ -351,7 +361,8 @@ try {
   });
   await check('all five workspaces and dialogs at five widths: overflow, axe, keyboard, screenshots', async () => {
     const populated = (await snapshot(page)).plan;
-    populated.items.push({ ...structuredClone(populated.items[0]), id: 'layout-unknown', type: 'income', name: 'Synthetic unknown', amount: null, amountChanges: [] });
+    const income = { ...structuredClone(populated.items[0]), id: 'layout-unknown', type: 'income', name: 'Synthetic unknown', amount: null, amountChanges: [] }; delete income.tags;
+    populated.items.push(income);
     populated.accounts = [{ id: 'layout-cash', name: 'Synthetic cash '.repeat(5).trim() }];
     populated.snapshots = [{ id: 'layout-cash-snap', accountId: 'layout-cash', date: '2025-11-01', amount: 1000000000000 }];
     populated.debtAccounts = [{ id: 'layout-debt', name: 'Synthetic debt '.repeat(5).trim(), direction: 'payable' }];

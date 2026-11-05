@@ -236,4 +236,23 @@ input[type=checkbox] { accent-color: var(--green); }
 #save-recovery { margin-bottom: 18px; }
 @media (max-width: 760px) { .detail-row { display: block; padding: 16px; } .row-actions { justify-content: flex-start; margin-top: 12px; } .object-footer { flex-wrap: wrap; } .object-header { flex-wrap: wrap; } .account-card { min-width: 0; } .navigation { gap: 0; } .nav-link { font-size: 11px; } .month-card .closing { font-size: 21px; } }
 @media (max-width: 390px) { .nav-link { font-size: 10px; padding: 10px 2px; } .object-identity { flex-wrap: wrap; } .stat-value { font-size: 23px; } }
+/* MS-004: shallow indentation keeps three configurable levels usable on phones. */
+.expense-toolbar { border: 1px solid var(--line); border-radius: 12px; background: var(--white); padding: 18px; margin-bottom: 18px; display: grid; gap: 16px; }
+.grouping-slots { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1fr); gap: 12px; align-items: end; }
+.grouping-slots .field, .tag-fields .field { min-width: 0; }
+.fixed-type { margin: 0; font-size: 12px; line-height: 1.6; }
+.expense-children { display: grid; gap: 10px; padding: 0 12px 12px; }
+.expense-group { min-width: 0; }
+.expense-group-title { margin: 0; font-size: 16px; }
+.expense-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.expense-group .object-header { flex-wrap: wrap; }
+.expense-group .object-total { flex-shrink: 1; min-width: 0; }
+.expense-toolbar .controls { margin: 0; }
+.month-context { padding: 16px; border-radius: 12px; background: var(--leaf); }
+.field .toggle input { width: 16px; min-width: 16px; padding: 0; flex: 0 0 16px; }
+.tag-row { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+.tag-fields { display: grid; gap: 10px; margin-bottom: 10px; }
+[data-tag-value-fields] { display: grid; gap: 10px; }
+[data-money-only] { min-width: 0; }
+@media (max-width: 760px) { .grouping-slots { grid-template-columns: 1fr; } .expense-children { padding: 0 6px 8px; } .expense-group .object-header { padding: 12px; } .expense-group .detail-row { padding: 12px; } .month-context { align-items: flex-start; } }
 @media print { .sidebar, .top-actions, .heading-actions, .button, .toast { display: none; } .shell, .workspace { display: block; } .table-scroll { overflow: visible; max-height: none; } main { padding: 10px; } }
