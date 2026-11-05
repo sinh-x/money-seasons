@@ -50,6 +50,7 @@ export async function expenseBrowserChecks({ page, context, base, watch, check, 
     assert.equal(await page.locator('.summary-grid .stat-value').first().textContent(), '8');
     assert.ok(await page.locator('.month-context').evaluate(e => e.compareDocumentPosition(document.querySelector('.summary-grid')) & Node.DOCUMENT_POSITION_FOLLOWING));
     await page.locator('[data-action=next-month]').click(); assert.equal(await page.locator('.detail-row').count(), 4);
+    assert.ok(await page.locator('[data-action=next-month]').evaluate(e => e === document.activeElement));
     await page.locator('[data-action=previous-month]').click(); assert.equal(await page.locator('.detail-row').count(), 8);
     await show(true); const total = await page.locator('.summary-grid').textContent(); assert.match(total, /12\.050\.000/);
     await page.locator('#include-tentative').check(); assert.match(await page.locator('.summary-grid').textContent(), /13\.850\.000/); await page.locator('#include-tentative').uncheck();
@@ -58,6 +59,7 @@ export async function expenseBrowserChecks({ page, context, base, watch, check, 
       assert.deepEqual((await page.locator('[data-expense-id]').evaluateAll(rows => rows.map(r => r.dataset.expenseId))).sort(), fixture.items.slice(0, 8).map(i => i.id).sort());
     }
     await group([`tag:${category.id}`, 'object', `tag:${necessity.id}`]);
+    assert.ok(await page.locator('[data-group-level="2"]').evaluate(e => e === document.activeElement));
     assert.equal(await page.locator('[data-group-level="1"] option').filter({ hasText: 'Danh mục' }).evaluate(e => e.disabled), true);
     const gift = page.locator('[data-expense-id=Gift]');
     assert.ok(await gift.evaluate(e => { let n = e.parentElement, count = 0; while (n) { if (n.matches('.expense-group') && n.querySelector(':scope > header .collapse-toggle')?.textContent === 'Khác') count++; n = n.parentElement; } return count === 2; }));
@@ -170,6 +172,15 @@ export async function expenseBrowserChecks({ page, context, base, watch, check, 
     await page.locator('[data-expense-id=Food] [data-action=item]:not(.amount-button)').click(); await page.locator('[name=end]').fill('2026-12');
     const preserved = await snapshot(page); await page.locator('#edit-form button[type=submit]').click(); await page.locator('#form-error').waitFor({ state: 'visible' }); assert.deepEqual(await snapshot(page), preserved); await close(page);
     await importPlan(page, fixture); await page.locator('#view-month').selectOption('2026-11');
+  });
+  await check('MS-004 queued old close event cannot erase a newly opened confirmation', async () => {
+    const before = await snapshot(page), replacement = { ...before.plan, name: 'Synthetic confirmation race' };
+    await page.locator('#import-file').setInputFiles({ name: 'confirmation-race.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(replacement)) });
+    await page.locator('#confirm-dialog').waitFor({ state: 'visible' });
+    // Reproduce delivery of the previous close task after a new showModal().
+    await page.locator('#confirm-dialog').evaluate(d => d.dispatchEvent(new Event('close')));
+    await confirm(page); await saved(page, before.revision); assert.deepEqual((await snapshot(page)).plan, replacement);
+    await importPlan(page, fixture);
   });
   await check('MS-004 tagged stale save keeps acknowledged library and exportable complete candidate', async () => {
     const other = await context.newPage(); watch(other); await other.goto(base); await other.locator('#application').waitFor({ state: 'visible' });

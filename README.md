@@ -8,6 +8,10 @@ MS-001's four implementation phases are now committed on its feature branch foll
 
 The [MS-001 wrap-up handoff](docs/ms-001-wrap-up.md) records the explicit local `develop` integration request, fresh checks and remaining operational/UAT limits. Local integration does not push code, restart services or migrate financial data.
 
+## MS-004 Expenses candidate
+
+[Monthly Expenses, structured tags and optional money display](docs/ms-004.md) are implemented locally in P1–P4 with phase commits at Sinh's explicit request. The external r001 review pair remains unapproved; no independent review, human UAT, merge, push or service deployment is implied. Existing running stacks are not updated by these commits.
+
 ## Fictional family learning demo
 
 Explore all five workspaces with **Minh, Lan, An and Bình** using the [family demo learning guide](docs/demo-data.md). The repo-shipped sample has 9 objects and 19 entries, literal VND, fixed November 2026–December 2027 schedules, cash history and separate debts. It includes unknown, zero, tentative and forward-estimate examples.
@@ -17,7 +21,7 @@ Explore all five workspaces with **Minh, Lan, An and Bình** using the [family d
 ## Five workspaces
 
 - **Lịch tài chính:** chronological monthly columns, separate income/expense groups, account reference dates, opening/closing totals; month cards/detail on narrow screens.
-- **Rõ chi:** create/select a Person, Group or Category, then add purpose, details and schedule. Enter the amount later.
+- **Rõ chi:** selected-month occurrences, three optional Object/tag grouping levels and a fixed inner repeated/once split. Create/select a shared object, then purpose, details, optional key–value tags and schedule. **Ẩn/Hiện số tiền cụ thể** defaults off in list/form; hiding preserves money/history. **Xem tất cả lịch đã lưu** exposes inactive schedules without counting them in the month.
 - **Đa thu:** same shared objects, but only objects with income details appear. Unknown/zero/tentative or out-of-month income still qualifies. All objects remain available in Add Income.
 - **Tài khoản:** named cash accounts with dated balance snapshots. History is retained; only the latest applicable reference date contributes.
 - **Công nợ:** separate payable/receivable accounts and dated balances. Totals use each account's latest reference date applicable to **Tháng xem**, not the sum of its history or necessarily the globally newest balance. Missing balances stay unknown; explicit zero is valid. Manual repayment plans are expenses; collection plans are income. Planning never automatically changes debt balances.
@@ -28,7 +32,7 @@ Types differ only by labeled icons, not permissions/calculations. Shared renames
 
 Use the arrow/name controls to collapse or expand:
 
-- Income/expense object cards: keep name, type, entry count and monthly total visible; hide individual entries/actions.
+- Income/expense object cards and nested expense tag/type groups: keep names/counts and monthly totals (when money display is enabled); hide individual entries/actions.
 - Calendar object groups: keep each object's monthly totals while hiding its detail rows.
 - Calendar income/expense sections: hide the whole section's groups/details while its overall monthly totals and closing cash remain visible.
 - Cash/debt history: hide dated records while account cards and balance totals stay visible.
@@ -48,7 +52,7 @@ All stored amounts are exact integer VND, at most 1 trillion per field. Blank pl
 | `1,5tr` / `1.5tr` | 1,500,000 |
 | `500 VND` / `500đ` | 500 |
 
-Bare numbers mean thousands. One/two decimal digits are accepted; consistent three-digit comma/dot groups are grouping, **not three decimal places**. Mixed separators, negatives, exponents, unknown units, fractional VND and overflow reject without rounding. Every amount editor shows a parsed preview. Reopened stored amounts include `VND` to avoid accidental rescaling.
+Bare numbers mean thousands. One/two decimal digits are accepted; consistent three-digit comma/dot groups are grouping, **not three decimal places**. Mixed separators, negatives, exponents, unknown units, fractional VND and overflow reject without rounding. Every visible amount editor shows a parsed preview; hiding expense amounts keeps and validates the draft. Reopened stored amounts include `VND` to avoid accidental rescaling.
 
 - Schedules: once, monthly, every N months (1–120), yearly. **Save the full schedule independently of the forecast window**, including dates before/after it within 2000–2100. Only overlapping occurrences affect the displayed forecast. The forecast remains 1–120 months; a routine can span longer. Changing the window never truncates/deletes/re-anchors/extends a routine or its estimate history. Out-of-window entries remain editable in Income/Expenses.
 - Estimate edits preview/confirm the effective occurrence month. Earlier values remain; later change points still apply. Replacing a same-month point is explicit. Schedule changes cannot orphan saved estimate history.
@@ -113,9 +117,9 @@ No automatic upload, conversion or actual deletion. A legacy server store is rea
 ```sh
 npm ci
 npm run check
-node --test test/model.test.mjs test/amount-input.test.mjs test/accounts-debts.test.mjs
+node --test test/expense-tags.test.mjs test/model.test.mjs test/amount-input.test.mjs test/accounts-debts.test.mjs test/demo-data.test.mjs
 node --test test/server.test.mjs test/persistence.test.mjs test/auth.test.mjs
-node --test test/deployment.test.mjs
+node --test test/deployment.test.mjs test/local-stack.test.mjs
 npm test
 BROWSER_PATH="$(command -v google-chrome)" npm run test:browser
 ```
@@ -124,6 +128,6 @@ Playwright/axe are pinned development dependencies. The browser runner owns an e
 
 ## Code / exclusions
 
-`public/model.js`: v3 objects/plans/accounts/debts/forecast. `amount-input.js`: exact parser. `legacy-model.js`: read/convert old schemas and historical regression only. `persistence.mjs`, `auth.mjs`, `server.mjs`: private storage/access/API. `public/app.js`: five views and safe edit/recovery flows.
+`public/model.js`: v3 objects/plans/accounts/debts/forecast; `public/expense-tags.js`: optional-v3 expense tags and pure grouping. `amount-input.js`: exact parser. `legacy-model.js`: read/convert old schemas and historical regression only. `persistence.mjs`, `auth.mjs`, `server.mjs`: private storage/access/API. `public/app.js`: five views and safe edit/recovery flows.
 
 Deferred: databases, cloud/banks, automatic/off-machine backups, multiple plans, personal roles, membership, automatic debt allocation, transaction ledger/actual entry, daily forecasting, noncash asset pricing and preparation targets. Follow [Git Flow](docs/branching.md); local commits do not imply remote backup, merge, push or release.

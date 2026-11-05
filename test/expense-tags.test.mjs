@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { blankPlan, validatePlan, forecast, demoPlan, reviseEstimate, plannedAmount } from '../public/model.js';
 import { CATEGORY_STARTERS, tagLibrary, groupExpenses, activeDimensions, normalizeTagName, uniqueTagName, removeTagDefinition } from '../public/expense-tags.js';
+import { expenseFixture } from '../scripts/expense-fixture.mjs';
 
 function fixture() {
   const p = blankPlan();
@@ -23,6 +24,10 @@ test('absent-only exact starters are deterministic, collision-safe and side-effe
   p.objects.push({ id: defs[0].id, name: 'Collision', type: 'person' }, { id: defs[0].values[0].id, name: 'Collision value', type: 'person' });
   const next = { ...p, tagDefinitions: tagLibrary(p) }; validatePlan(next);
   assert.notEqual(next.tagDefinitions[0].id, defs[0].id);
+  const collisionChain = blankPlan();
+  collisionChain.objects = Array.from({ length: 81 - defs[0].id.length }, (_, n) => ({ id: defs[0].id + '-'.repeat(n), name: `Collision ${n}`, type: 'person' }));
+  assert.ok(tagLibrary(collisionChain).every(k => k.id.length <= 80));
+  validatePlan({ ...collisionChain, tagDefinitions: tagLibrary(collisionChain) });
   assert.deepEqual(tagLibrary({ ...p, tagDefinitions: [] }), []);
   const edited = [{ id: 'edited', name: 'Edited', values: [] }];
   assert.deepEqual(tagLibrary({ ...p, tagDefinitions: edited }), edited);
@@ -86,6 +91,24 @@ test('all grouping permutations partition once; fixed recurrence is always the i
   assert.equal(JSON.stringify(p), before);
   assert.throws(() => activeDimensions(['object', 'object'], p.tagDefinitions)); assert.throws(() => activeDimensions(['bad'], p.tagDefinitions));
   assert.throws(() => activeDimensions(['', '', '', ''], p.tagDefinitions));
+});
+test('UAT fixture independently matches November/December counts, unknowns and tentative totals', () => {
+  const old = expenseFixture({ tagged: false }), p = expenseFixture(), [november, december] = forecast(p);
+  assert.deepEqual([november.entries.length, december.entries.length], [8, 4]);
+  assert.deepEqual([november.expense, november.expenseMissing], [12050000, 2]);
+  assert.deepEqual([forecast(p, true)[0].expense, forecast(p, true)[0].expenseMissing], [13850000, 2]);
+  assert.deepEqual([december.expense, december.expenseMissing], [11450000, 1]);
+  const financial = rows => rows.map(({ entries, ...totals }) => totals);
+  assert.deepEqual(financial(forecast(p)), financial(forecast(old)));
+  assert.deepEqual(financial(forecast(p, true)), financial(forecast(old, true)));
+  assert.equal(leaves(groupExpenses(p, '2026-11')).flatMap(g => g.items).length, 8);
+  assert.equal(leaves(groupExpenses(p, '2026-12')).flatMap(g => g.items).length, 4);
+});
+test('tag definitions cannot bypass the existing one-megabyte plan bound', () => {
+  const p = blankPlan();
+  p.tagDefinitions = Array.from({ length: 150 }, (_, k) => ({ id: `key-${k}`, name: `Key ${k}`, values: Array.from({ length: 100 }, (_, v) => ({ id: `value-${k}-${v}`, name: `${v} ${'x'.repeat(35)}` })) }));
+  assert.ok(new TextEncoder().encode(JSON.stringify(p)).length > 1000000);
+  assert.throws(() => validatePlan(p), /1 MB/);
 });
 test('month/search/all-schedule projections never invent occurrences or change summary/history', () => {
   const p = fixture(), before = JSON.stringify(p), summary = forecast(p);

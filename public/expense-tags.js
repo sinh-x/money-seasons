@@ -55,7 +55,7 @@ export function tagLibrary(plan) {
   // Deterministic, collision-safe starter identities; viewing never saves them.
   const ids = new Set();
   for (const list of ['objects', 'items', 'accounts', 'snapshots', 'debtAccounts', 'debtSnapshots']) for (const entity of plan[list] ?? []) ids.add(entity.id);
-  const allocate = base => { let id = base; while (ids.has(id)) id += '-'; ids.add(id); return id; };
+  const allocate = base => { let id = base, suffix = 0; while (ids.has(id)) id = `${base}-${++suffix}`; ids.add(id); return id; };
   return [['Danh mục', CATEGORY_STARTERS], ['Mức cần thiết', ['Thiết yếu', 'Tùy chọn']]].map(([name, values], n) => ({ id: allocate(`expense-tag-${n + 1}`), name,
     values: values.map((value, i) => ({ id: allocate(`expense-tag-${n + 1}-value-${i + 1}`), name: value })) }));
 }
