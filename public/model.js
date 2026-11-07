@@ -1,6 +1,7 @@
 // Active v3 monthly planning model: snapshots + plans, never transactions/actuals.
 import * as legacy from './legacy-model.js';
 import { createDemoData } from './demo-data.js';
+import { validateExpenseTags } from './expense-tags.js';
 export { MAX_AMOUNT, MAX_BYTES, MONTHS, monthIndex, monthKey, monthRange, occurs, plannedAmount } from './legacy-model.js';
 import { MAX_AMOUNT, MAX_BYTES, monthRange, monthIndex, monthKey, occurs, plannedAmount } from './legacy-model.js';
 const fail = (message = 'Kế hoạch không hợp lệ. Dữ liệu hiện tại được giữ nguyên.') => { throw new Error(message); };
@@ -26,7 +27,7 @@ export function blankPlan(startMonth = '2026-11', endMonth = '2027-12') {
     objects: [], items: [], accounts: [], snapshots: [], debtAccounts: [], debtSnapshots: [] });
 }
 export function validatePlan(source, { today = todayISO() } = {}) {
-  shape(source, 'version currency name demo startMonth endMonth objects items accounts snapshots debtAccounts debtSnapshots');
+  shape(source, 'version currency name demo startMonth endMonth objects items accounts snapshots debtAccounts debtSnapshots tagDefinitions');
   if (source.version !== 3 || source.currency !== 'VND' || !text(source.name, 80) || typeof source.demo !== 'boolean' || !validDate(today)) fail();
   monthRange(source.startMonth, source.endMonth);
   const p = structuredClone(source), ids = new Set();
@@ -46,7 +47,7 @@ export function validatePlan(source, { today = todayISO() } = {}) {
     a.name = a.name.trim();
   }
   for (const i of list('items', 500)) {
-    shape(i, 'id objectId name description type status amount recurrence amountChanges'); identify(i);
+    shape(i, 'id objectId name description type status amount recurrence amountChanges tags'); identify(i);
     if (!p.objects.some(o => o.id === i.objectId) || !text(i.name, 100) || !text(i.description, 500, true) ||
         !['income', 'expense'].includes(i.type) || !['confirmed', 'tentative'].includes(i.status) || !amount(i.amount)) fail();
     i.name = i.name.trim();
@@ -74,6 +75,7 @@ export function validatePlan(source, { today = todayISO() } = {}) {
       dates.add(key);
     }
   }
+  validateExpenseTags(p, identify);
   p.name = p.name.trim();
   if (new TextEncoder().encode(JSON.stringify(p)).length > MAX_BYTES) fail('Kế hoạch vượt 1 MB.');
   forecast(p); forecast(p, true);

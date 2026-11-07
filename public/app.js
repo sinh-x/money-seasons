@@ -1,5 +1,6 @@
 import { MAX_BYTES, blankPlan, demoPlan, validatePlan, forecast, monthRange, occurs, plannedAmount, estimateMonth, changeWindow, reviseEstimate, latestSnapshot, cashBaseline, debtTotal, setSnapshot, convertLegacy, todayISO } from './model.js';
 import { parseAmount, formatAmountInput } from './amount-input.js';
+import { tagLibrary, groupExpenses, uniqueTagName, removeTagDefinition } from './expense-tags.js';
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const h = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = value => value === null ? 'Chưa biết' : `${new Intl.NumberFormat('vi-VN').format(value)} ₫`;
@@ -15,13 +16,20 @@ const results = () => forecast(plan, tentative);
 const blocked = () => busy || !!pending || !!serverLegacy;
 // Ephemeral view state only: never included in plan saves/exports or API writes.
 const collapsed = new Set();
+// Longer than the model's 80-character ID limit: cannot alias imported IDs.
+const NEW_TAG = 'new:'.repeat(21);
+let expenseGroups = ['object', '', ''], expenseSearch = '', allExpenseSchedules = false, showExpenseAmounts = false, tagRowCounter = 0;
+const expenseTree = () => groupExpenses(plan, selectedMonth, expenseGroups, { allSchedules: allExpenseSchedules, search: expenseSearch });
+const expenseGroupKey = g => `expense:${JSON.stringify(g.path)}`;
+const walkGroups = groups => groups.flatMap(g => [g, ...walkGroups(g.children)]);
 const hiddenGroup = key => collapsed.has(key) ? 'hidden' : '';
 function collapseButton(key, title, controls, text = title) {
   return `<button type="button" class="collapse-toggle" data-collapse="${h(key)}" aria-expanded="${!collapsed.has(key)}" aria-controls="${h(controls)}" aria-label="${collapsed.has(key) ? 'Mở rộng' : 'Thu gọn'} ${h(title)}">${h(text)}</button>`;
 }
 function collapseKeys() {
   if (view === 'calendar') return table ? ['section:income', 'section:expense', ...['income', 'expense'].flatMap(type => plan.objects.filter(o => plan.items.some(i => i.objectId === o.id && i.type === type)).map(o => `calendar:${type}:${o.id}`))] : [];
-  if (view === 'income' || view === 'expense') return plan.objects.filter(o => view === 'expense' || plan.items.some(i => i.objectId === o.id && i.type === view)).map(o => `object:${view}:${o.id}`);
+  if (view === 'expense') return walkGroups(expenseTree()).map(expenseGroupKey);
+  if (view === 'income') return plan.objects.filter(o => plan.items.some(i => i.objectId === o.id && i.type === view)).map(o => `object:${view}:${o.id}`);
   return [`history:${view}`];
 }
 function collapseTools() {
@@ -84,7 +92,7 @@ function renderStatus() {
   $('#save-recovery').hidden = !pending; $('#retry-button').hidden = !pending?.checked;
   $('#legacy-button').hidden = !serverLegacy && !hasBrowserLegacy();
   $$('[data-mutate], #settings-button').forEach(e => { e.disabled = blocked(); });
-  $$('#editor input, #editor select, #editor textarea, #editor button[type=submit]').forEach(e => { e.disabled = busy || !!pending || e.hasAttribute('data-locked') || (e.name === 'ack' && !migration?.downloaded); });
+  $$('#editor input, #editor select, #editor textarea, #editor button[type=submit]').forEach(e => { e.disabled = busy || !!pending || e.hasAttribute('data-locked') || e.hasAttribute('data-inactive') || (e.name === 'ack' && !migration?.downloaded); });
   if (pending && $('#editor').open && $('#form-error')) { $('#form-error').hidden = false; $('#form-error').textContent = 'CHƯA LƯU. Dữ liệu biểu mẫu được giữ; đóng biểu mẫu để xuất bản sửa và đọc lại trạng thái.'; }
 }
 function hasBrowserLegacy() { try { return !!localStorage.getItem(KEY); } catch { return false; } }
@@ -100,9 +108,12 @@ function render() {
   if (!range().includes(selectedMonth)) selectedMonth = plan.startMonth;
   $('#plan-title').textContent = `${plan.name} · ${label(plan.startMonth)}–${label(plan.endMonth)}`;
   $$('[data-view]').forEach(e => { const active = e.dataset.view === view; e.classList.toggle('active', active); if (active) e.setAttribute('aria-current', 'page'); else e.removeAttribute('aria-current'); });
+  const dimensions = new Set(['object', ...tagLibrary(plan).map(k => `tag:${k.id}`)]);
+  expenseGroups = expenseGroups.map(d => dimensions.has(d) ? d : '');
   $('#workspace').innerHTML = view === 'calendar' ? calendarPage() : ['income', 'expense'].includes(view) ? itemPage(view) : accountsPage(view === 'debts');
   renderStatus();
 }
+function renderAndFocus(selector) { render(); $(selector)?.focus({ preventScroll: true }); }
 function heading(title, description, actions = '') {
   return `<header class="page-heading"><div><div class="eyebrow">CÙNG HIỂU · CÙNG LÊN KẾ HOẠCH</div><h1>${h(title)}</h1><p>${h(description)}</p></div><div class="heading-actions">${actions}</div></header>`;
 }
@@ -112,7 +123,33 @@ const sumItems = (items, month) => items.filter(i => occurs(i, month) && (i.stat
 const sumText = out => `${money(out.known)}${out.missing ? ' + ? (chưa biết)' : ''}`;
 const flowText = (month, type) => sumText({ known: month[type], missing: month[`${type}Missing`] });
 function schedule(i) { const r = i.recurrence; return `${r.kind === 'once' ? 'Một lần' : r.everyMonths === 12 ? 'Hằng năm' : `Mỗi ${r.everyMonths} tháng`} · ${label(r.anchor)}–${label(r.end)}`; }
+const amountSwitch = () => `<label class="toggle amount-switch"><input type="checkbox" role="switch" data-amount-visibility ${showExpenseAmounts ? 'checked' : ''}><span>Ẩn/Hiện số tiền cụ thể</span></label>`;
+const expenseMoney = content => `<span data-money-only ${showExpenseAmounts ? '' : 'hidden'}>${content}</span>`;
+function syncExpenseVisibility() {
+  $$('[data-amount-visibility]').forEach(input => { input.checked = showExpenseAmounts; });
+  $$('[data-money-only]').forEach(node => { node.hidden = !showExpenseAmounts; });
+}
+function expensePage() {
+  const items = plan.items.filter(i => i.type === 'expense'), current = items.filter(i => occurs(i, selectedMonth)), library = tagLibrary(plan), months = range(), index = months.indexOf(selectedMonth);
+  const options = [['', 'Không nhóm'], ['object', 'Đối tượng / người'], ...library.map(k => [`tag:${k.id}`, k.name])];
+  const context = `<section class="controls month-context" aria-label="Tháng xem và hiển thị số tiền"><div class="controls-left">${button('‹', 'previous-month', `aria-label="Tháng trước" ${index === 0 ? 'disabled' : ''}`)}<label>Tháng xem <select class="select" id="view-month">${monthOptions(selectedMonth)}</select></label>${button('›', 'next-month', `aria-label="Tháng sau" ${index === months.length - 1 ? 'disabled' : ''}`)}</div>${amountSwitch()}</section>`;
+  const groups = expenseTree();
+  const branch = (g, indexPath) => {
+    const key = expenseGroupKey(g), details = `expense-group-${indexPath}`, object = g.dimension === 'object' ? plan.objects.find(o => o.id === g.value) : null;
+    const inherited = g.path.find(([dimension]) => dimension === 'object')?.[1], children = g.children.filter(child => child.items.length);
+    const attrs = `data-kind="expense" ${inherited ? `data-object="${h(inherited)}"` : ''} ${g.dimension === 'type' ? `data-repeat-kind="${g.value}"` : ''} data-mutate`;
+    return `<article class="expense-group ${object ? 'object-card collapsible-object' : 'panel'}" ${object ? `data-object="${h(object.id)}"` : ''}><header class="object-header"><div class="object-identity">${object ? `<span class="object-icon ${object.type}" aria-hidden="true">${TYPES[object.type][0]}</span>` : ''}<div><h2 class="${object ? 'object-title' : 'expense-group-title'}">${collapseButton(key, g.label, details)}</h2><small>${object ? `${TYPES[object.type][1]} · Mã ${h(object.id.slice(-8))} · ` : ''}${g.items.length} khoản</small></div></div><div class="object-total">${expenseMoney(`<strong>${h(sumText(sumItems(g.items, selectedMonth)))}</strong>`)}<small>Dự kiến ${label(selectedMonth)}</small></div></header><div id="${details}" ${hiddenGroup(key)}>${object ? `<div class="object-management">${button('Đổi tên / loại', 'object', `data-id="${h(object.id)}" data-mutate`, 'text small')}${button('Xóa đối tượng', 'delete-object', `data-id="${h(object.id)}" data-mutate`, 'text small danger')}</div>` : ''}${children.length ? `<div class="expense-children">${children.map((child, n) => branch(child, `${indexPath}-${n}`)).join('')}</div>` : g.items.map(item => expenseRow(item, library)).join('') || '<p class="empty">Chưa có khoản chi phù hợp.</p>'}<footer class="object-footer">${button('＋ Thêm chi tiết chi', 'item', attrs, 'text')}</footer></div></article>`;
+  };
+  return heading(TITLES.expense, 'Bắt đầu từ ai, cho việc gì. Tự chọn tối đa ba mức nhóm. Chưa biết số tiền vẫn có thể lên kế hoạch.', button('⚑ Quản lý thẻ', 'tags', 'data-mutate') + button('＋ Tạo đối tượng', 'object', 'data-mutate') + button('＋ Thêm khoản chi', 'item', 'data-kind="expense" data-mutate', 'primary')) + context +
+    `<div class="summary-grid">${stat('Khoản trong tháng', current.length, 'Các lần thuộc tháng đang xem.', 'highlight')}${stat('Đối tượng', plan.objects.length, 'Dùng chung hai trang thu / chi.')}${stat('Lịch đã lưu', items.length, 'Kể cả ngoài tháng đang xem.')}<article class="stat"><span class="stat-label">Dự kiến chi · ${label(selectedMonth)}</span>${expenseMoney(`<strong class="stat-value long-value">${h(sumText(sumItems(items, selectedMonth)))}</strong>`)}</article></div>` +
+    `<section class="expense-toolbar" aria-label="Lọc và nhóm khoản chi"><label class="field">Tìm khoản chi / chi tiết<input class="search" id="expense-search" type="search" value="${h(expenseSearch)}" placeholder="Tên khoản chi hoặc chi tiết…"></label><div class="grouping-slots" role="group" aria-label="Ba mức nhóm dùng chung">${expenseGroups.map((value, n) => `<label class="field"><span>Mức ${n + 1}</span><select data-group-level="${n}">${options.map(([id, name]) => `<option value="${h(id)}" ${id === value ? 'selected' : ''} ${id && id !== value && expenseGroups.includes(id) ? 'disabled' : ''}>${h(name)}</option>`).join('')}</select></label>`).join('')}<p class="fixed-type">→ Lặp lại / Một lần<br><small>Luôn ở mức trong cùng</small></p></div><div class="controls"><label class="toggle"><input type="checkbox" id="include-tentative" ${tentative ? 'checked' : ''}>Tính cả khoản đang cân nhắc</label>${button(allExpenseSchedules ? 'Chỉ tháng đang xem' : 'Xem tất cả lịch đã lưu', 'all-expense-schedules', `aria-pressed="${allExpenseSchedules}"`)}</div>${collapseTools()}</section><p class="view-note">${allExpenseSchedules ? 'Tất cả lịch đã lưu · tổng vẫn chỉ tính tháng đang xem.' : `Các khoản chi thuộc tháng ${label(selectedMonth)}.`}</p><section class="object-grid" aria-label="Các khoản chi">${groups.filter(g => g.items.length || g.dimension === 'object').map((g, n) => branch(g, String(n))).join('') || '<p class="empty panel">Không có khoản chi phù hợp.</p>'}</section>`;
+}
+function expenseRow(item, library) {
+  const month = estimateMonth(item, selectedMonth), active = occurs(item, selectedMonth);
+  return `<div class="detail-row" data-expense-id="${h(item.id)}"><div><strong>${h(item.name)}</strong><p>${h(item.description)}</p><small>${h(objectName(item.objectId))} · ${h(schedule(item))}${!active ? ' · Ngoài tháng đang xem' : ''}${item.status === 'tentative' ? ' · Đang cân nhắc' : ''}</small><div class="expense-tags">${(item.tags ?? []).map(t => { const key = library.find(k => k.id === t.keyId); return `<span class="pill">${h(key.name)}: ${h(key.values.find(v => v.id === t.valueId).name)}</span>`; }).join('')}</div></div><div class="row-actions">${expenseMoney(button(h(money(plannedAmount(item, month))), 'item', `data-id="${h(item.id)}" data-month="${month}" data-mutate`, 'amount-button'))}${button('Sửa chi tiết', 'item', `data-id="${h(item.id)}" data-mutate`, 'small')}${button('Xóa', 'delete-item', `data-id="${h(item.id)}" data-mutate aria-label="Xóa ${h(item.name)}"`, 'small danger')}</div></div>`;
+}
 function itemPage(kind) {
+  if (kind === 'expense') return expensePage();
   const expense = kind === 'expense', items = plan.items.filter(i => i.type === kind);
   const objects = plan.objects.filter(o => expense || items.some(i => i.objectId === o.id));
   return heading(TITLES[kind], expense ? 'Bắt đầu từ một người, nhóm hoặc danh mục. Nhớ điều cần chi, thêm chi tiết và lịch, rồi bổ sung tiền sau.' : 'Chỉ hiện đối tượng đã có khoản thu, kể cả chưa biết tiền. Mọi đối tượng dùng chung đều có thể chọn khi thêm thu.',
@@ -175,12 +212,12 @@ const field = (title, control, note = '', full = false) => `<label class="field 
 const amountField = (value = null, required = false) => field(required ? 'Số dư' : 'Ước tính mỗi lần', `<input name="amount" type="text" inputmode="text" maxlength="60" data-amount ${required ? 'required' : ''} value="${h(formatAmountInput(value))}" placeholder="${required ? 'Nhập số dư' : 'Chưa biết — nhập sau'}"><output class="amount-preview" aria-live="polite"></output>`, 'Mặc định nghìn: 5 = 5.000 ₫; 5tr / 5M = 5 triệu; 5 trăm = 500.000 ₫. Ghi VND để nhập nguyên đồng.');
 function restoreFocus() {
   if (!focusSource) return;
-  const { id, action, entity, month } = focusSource;
-  const candidate = id ? document.getElementById(id) : $$('[data-action]').find(e => e.dataset.action === action && e.dataset.id === entity && e.dataset.month === month);
+  const { id, action, entity, month, object, repeatKind } = focusSource;
+  const candidate = id ? document.getElementById(id) : $$('[data-action]').find(e => e.dataset.action === action && e.dataset.id === entity && e.dataset.month === month && e.dataset.object === object && e.dataset.repeatKind === repeatKind);
   (candidate ?? $('[data-view][aria-current]') ?? $('#settings-button')).focus();
 }
 function openEditor(title, subtitle, fields, handler, submit = 'Lưu', extra = '') {
-  const source = document.activeElement; focusSource = { id: source?.id, action: source?.dataset.action, entity: source?.dataset.id, month: source?.dataset.month };
+  const source = document.activeElement; focusSource = { id: source?.id, action: source?.dataset.action, entity: source?.dataset.id, month: source?.dataset.month, object: source?.dataset.object, repeatKind: source?.dataset.repeatKind };
   submitEditor = handler;
   $('#editor').innerHTML = `<form id="edit-form"><header class="dialog-head"><div><h2 id="editor-title">${h(title)}</h2><p>${h(subtitle)}</p></div><button class="icon-button" type="button" data-close aria-label="Đóng">×</button></header><div class="dialog-body"><p id="form-error" class="form-error" role="alert" hidden></p><div class="fields">${fields}</div></div><footer class="dialog-actions">${extra}<button class="button" type="button" data-close>Hủy</button>${handler ? `<button class="button primary" type="submit">${h(submit)}</button>` : ''}</footer></form>`;
   $('#editor').showModal(); updatePreviews(); renderStatus();
@@ -199,25 +236,70 @@ function objectDialog(id) {
     field('Tên hiển thị', `<input name="name" maxlength="80" required value="${h(object?.name)}">`, 'Tên trùng không tự gộp; dùng mã để phân biệt.', true) + field('Loại', `<select name="objectType">${Object.entries(TYPES).map(([key, [icon, text]]) => `<option value="${key}" ${key === object?.type ? 'selected' : ''}>${icon} ${text}</option>`).join('')}</select>`, '', true),
     async f => { const next = structuredClone(plan), value = { id: id || crypto.randomUUID(), name: f.name.value, type: f.objectType.value }; if (object) next.objects[next.objects.findIndex(o => o.id === id)] = value; else next.objects.push(value); await saveAndClose(next); });
 }
-function itemDialog({ id, kind = 'expense', objectId, month = selectedMonth, suggestion = '' } = {}) {
+function tagRow(tag = {}) {
+  const n = ++tagRowCounter, library = tagLibrary(plan), key = library.find(k => k.id === tag.keyId);
+  return `<div class="tag-row" data-tag-row><div class="tag-fields"><div class="tag-key-fields">${field('Khóa thẻ', `<select data-tag-key><option value="">Chọn khóa…</option>${library.map(k => `<option value="${h(k.id)}" ${k.id === tag.keyId ? 'selected' : ''}>${h(k.name)}</option>`).join('')}<option value="${NEW_TAG}">＋ Tạo khóa thẻ mới</option></select>`)}${field('Tên khóa mới', `<input data-new-key maxlength="160" id="tag-key-${n}">`)}</div><div data-tag-value-fields>${tagValueFields(key, tag.valueId)}</div></div><button type="button" class="button small danger remove-tag" data-remove-tag aria-label="Gỡ thẻ" title="Gỡ thẻ">×</button></div>`;
+}
+function tagValueFields(key, valueId) {
+  return field('Giá trị', `<select data-tag-value><option value="">Chọn giá trị…</option>${(key?.values ?? []).map(v => `<option value="${h(v.id)}" ${v.id === valueId ? 'selected' : ''}>${h(v.name)}</option>`).join('')}<option value="${NEW_TAG}">＋ Thêm giá trị mới</option></select>`) + field('Tên giá trị mới', '<input data-new-value maxlength="160">');
+}
+function updateTagRows() {
+  const rows = $$('#editor [data-tag-row]'), assigned = rows.map(row => row.querySelector('[data-tag-key]').value);
+  for (const row of rows) {
+    const key = row.querySelector('[data-tag-key]'), value = row.querySelector('[data-tag-value]');
+    row.querySelector('[data-new-key]').closest('label').hidden = key.value !== NEW_TAG;
+    row.querySelector('[data-new-value]').closest('label').hidden = value.value !== NEW_TAG;
+    for (const option of key.options) option.disabled = !!option.value && option.value !== NEW_TAG && option.value !== key.value && assigned.includes(option.value);
+  }
+}
+function collectExpenseTags(next) {
+  const library = tagLibrary(plan), assignments = [];
+  for (const row of $$('#editor [data-tag-row]')) {
+    const keyId = row.querySelector('[data-tag-key]').value, valueId = row.querySelector('[data-tag-value]').value;
+    let key = library.find(k => k.id === keyId);
+    if (keyId === NEW_TAG) { key = { id: crypto.randomUUID(), name: uniqueTagName(row.querySelector('[data-new-key]').value, library), values: [] }; library.push(key); }
+    if (!key || !valueId) throw new Error('Chọn khóa và giá trị cho mỗi thẻ, hoặc gỡ hàng chưa dùng.');
+    let value = key.values.find(v => v.id === valueId);
+    if (valueId === NEW_TAG) { value = { id: crypto.randomUUID(), name: uniqueTagName(row.querySelector('[data-new-value]').value, key.values) }; key.values.push(value); }
+    if (!value) throw new Error('Chọn một giá trị thẻ hợp lệ.');
+    assignments.push({ keyId: key.id, valueId: value.id });
+  }
+  next.tagDefinitions = library;
+  return assignments;
+}
+function updateScheduleFields() {
+  const form = $('#edit-form'), repeat = form?.elements.repeat; if (!repeat) return;
+  const once = form.elements.expenseKind ? form.elements.expenseKind.value === 'once' : repeat.value === 'once';
+  if (form.elements.expenseKind) { repeat.closest('label').hidden = once; repeat.toggleAttribute('data-inactive', once); repeat.disabled = once || busy || !!pending; }
+  for (const [name, active] of [['end', !once], ['everyMonths', !once && repeat.value === 'interval']]) {
+    const input = form.elements[name]; input.closest('label').hidden = !active;
+    input.toggleAttribute('data-inactive', !active); input.disabled = !active || busy || !!pending;
+  }
+}
+function itemDialog({ id, kind = 'expense', objectId, month = selectedMonth, suggestion = '', repeatKind = 'once' } = {}) {
   if (!plan.objects.length) { objectDialog(); toast('Tạo đối tượng trước, sau đó thêm chi tiết.'); return; }
   const item = plan.items.find(i => i.id === id); if (item) kind = item.type;
-  const effective = item ? estimateMonth(item, month) : month;
-  const r = item?.recurrence ?? { kind: 'once', anchor: month, end: month, everyMonths: 1 };
-  openEditor(`${item ? 'Chỉnh' : 'Thêm'} khoản ${kind === 'income' ? 'thu' : 'chi'}`, 'Chọn đối tượng → mục đích → chi tiết & lịch → số tiền sau. Không ghi thực tế.',
+  const expense = kind === 'expense', effective = item ? estimateMonth(item, month) : month;
+  const r = item?.recurrence ?? { kind: repeatKind, anchor: month, end: repeatKind === 'once' ? month : plan.endMonth, everyMonths: 1 };
+  openEditor(`${item ? 'Chỉnh' : 'Thêm'} khoản ${expense ? 'chi' : 'thu'}`, 'Chọn đối tượng → mục đích → chi tiết & lịch → số tiền sau. Không ghi thực tế.',
+    (expense ? `<div class="field full">${amountSwitch()}</div>` : '') +
     field('Đối tượng dùng chung', `<select name="objectId">${plan.objects.map(o => `<option value="${h(o.id)}" ${o.id === (item?.objectId ?? objectId) ? 'selected' : ''}>${h(objectLabel(o))}</option>`).join('')}</select>`, '', true) +
     field('Tên khoản / mục đích', `<input name="name" required maxlength="100" value="${h(item?.name ?? suggestion)}">`, '', true) +
-    field('Chi tiết', `<textarea name="description" maxlength="500">${h(item?.description)}</textarea>`, '', true) + amountField(item ? plannedAmount(item, effective) : null) +
+    field('Chi tiết', `<textarea name="description" maxlength="500">${h(item?.description)}</textarea>`, '', true) +
+    (expense ? `<div class="field full" data-money-only ${showExpenseAmounts ? '' : 'hidden'}>${amountField(item ? plannedAmount(item, effective) : null)}</div>` : amountField(item ? plannedAmount(item, effective) : null)) +
     field('Mức xác định', `<select name="status"><option value="confirmed">Đưa vào kế hoạch</option><option value="tentative" ${item?.status === 'tentative' ? 'selected' : ''}>Đang cân nhắc</option></select>`) +
-    field('Lặp lại', `<select name="repeat"><option value="once">Một lần</option><option value="monthly" ${r.kind === 'interval' && r.everyMonths === 1 ? 'selected' : ''}>Hằng tháng</option><option value="interval" ${r.kind === 'interval' && ![1, 12].includes(r.everyMonths) ? 'selected' : ''}>Mỗi N tháng</option><option value="yearly" ${r.kind === 'interval' && r.everyMonths === 12 ? 'selected' : ''}>Hằng năm</option></select>`) +
-    field('Khoảng lặp N', `<input name="everyMonths" type="number" min="1" max="120" step="1" value="${r.everyMonths}">`, 'Chỉ dùng khi chọn Mỗi N tháng.') +
+    (expense ? field('Loại khoản chi', `<select name="expenseKind"><option value="once">Một lần</option><option value="interval" ${r.kind === 'interval' ? 'selected' : ''}>Lặp lại</option></select>`) : '') +
+    field(expense ? 'Tần suất' : 'Lặp lại', `<select name="repeat">${expense ? '' : '<option value="once">Một lần</option>'}<option value="monthly" ${r.kind === 'interval' && r.everyMonths === 1 ? 'selected' : ''}>Hằng tháng</option><option value="interval" ${r.kind === 'interval' && ![1, 12].includes(r.everyMonths) ? 'selected' : ''}>Mỗi N tháng</option><option value="yearly" ${r.kind === 'interval' && r.everyMonths === 12 ? 'selected' : ''}>Hằng năm</option></select>`) +
+    field('Khoảng lặp N', `<input name="everyMonths" type="number" min="1" max="120" step="1" value="${r.everyMonths}">`) +
     field('Tháng bắt đầu', `<input name="start" type="month" required value="${r.anchor}" min="2000-01" max="2100-12">`, 'Lịch được lưu độc lập với kỳ dự báo.') +
     field('Kết thúc (lịch lặp)', `<input name="end" type="month" value="${r.end}" min="2000-01" max="2100-12">`, 'Có thể ngoài kỳ dự báo. Chỉ tháng giao nhau được tính; không tự mở rộng kỳ.') +
-    (item ? field('Tháng hiệu lực số dự kiến', `<input name="effectiveMonth" type="month" required value="${effective}" min="${r.anchor}" max="${r.end}">`, 'Giữ các mốc sau đó; mọi thay đổi số tiền đều xem trước và xác nhận.', true) : ''),
+    (item ? `${expense ? `<div class="field full" data-money-only ${showExpenseAmounts ? '' : 'hidden'}>` : ''}${field('Tháng hiệu lực số dự kiến', `<input name="effectiveMonth" type="month" required value="${effective}" min="2000-01" max="2100-12">`, 'Giữ các mốc sau đó; mọi thay đổi số tiền đều xem trước và xác nhận.', true)}${expense ? '</div>' : ''}` : '') +
+    (expense ? `<section class="field full expense-tag-bundle" aria-label="Thẻ khoản chi"><h3>Thẻ khoản chi</h3><div id="expense-tag-rows">${(item?.tags ?? []).map(tagRow).join('')}</div><button type="button" class="button" data-add-tag>＋ Thêm thẻ</button></section>` : ''),
     async f => {
-      const next = structuredClone(plan), repeat = f.repeat.value, n = repeat === 'yearly' ? 12 : repeat === 'interval' ? Number(f.everyMonths.value) : 1;
+      const next = structuredClone(plan), repeat = expense && f.expenseKind.value === 'once' ? 'once' : f.repeat.value, n = repeat === 'yearly' ? 12 : repeat === 'interval' ? Number(f.everyMonths.value) : 1;
       const value = parseAmount(f.amount.value), entry = { id: id || crypto.randomUUID(), objectId: f.objectId.value, type: kind, name: f.name.value, description: f.description.value, status: f.status.value,
         amount: item ? item.amount : value, amountChanges: item?.amountChanges ?? [], recurrence: { kind: repeat === 'once' ? 'once' : 'interval', anchor: f.start.value, end: repeat === 'once' ? f.start.value : f.end.value, everyMonths: n } };
+      if (expense) entry.tags = collectExpenseTags(next);
       if (item) next.items[next.items.findIndex(i => i.id === id)] = entry; else next.items.push(entry);
       let valid = validatePlan(next);
       if (item) {
@@ -225,12 +307,57 @@ function itemDialog({ id, kind = 'expense', objectId, month = selectedMonth, sug
         if (value !== plannedAmount(item, f.effectiveMonth.value)) {
           valid = reviseEstimate(valid, id, f.effectiveMonth.value, value);
           const later = item.amountChanges.filter(c => c.month > f.effectiveMonth.value).map(c => label(c.month)).join(', ');
-          confirmChange('Xem trước đổi dự kiến', `${entry.name}: ${money(value)} từ ${label(f.effectiveMonth.value)}. Giữ dự kiến trước đó; thay mốc cùng tháng nếu có. ${later ? `Giữ các mốc muộn hơn: ${later}.` : 'Không có mốc muộn hơn.'}`, () => saveAndClose(valid)); return;
+          const message = showExpenseAmounts || !expense ? `${entry.name}: ${money(value)} từ ${label(f.effectiveMonth.value)}.` : `${entry.name}: đổi dự kiến từ ${label(f.effectiveMonth.value)}.`;
+          confirmChange('Xem trước đổi dự kiến', `${message} Giữ dự kiến trước đó; thay mốc cùng tháng nếu có. ${later ? `Giữ các mốc muộn hơn: ${later}.` : 'Không có mốc muộn hơn.'}`, () => saveAndClose(valid)); return;
         }
       }
       if (item && JSON.stringify(item.recurrence) !== JSON.stringify(entry.recurrence)) confirmChange('Xác nhận đổi lịch cả chuỗi', 'Đổi lịch ảnh hưởng mọi lần dự kiến trong chuỗi. Không bỏ các mốc dự kiến đã lưu. Hãy kiểm tra trước khi lưu.', () => saveAndClose(valid));
       else await saveAndClose(valid);
-    });
+    }, expense ? 'Lưu chi phí' : 'Lưu');
+  $('#edit-form').dataset.itemId = id ?? '';
+  // Hidden invalid money must report our visible error, not an unfocusable native
+  // validation bubble. The shared validator still checks every field on save.
+  $('#edit-form').noValidate = expense;
+  updateScheduleFields(); updateTagRows();
+}
+function tagManager() {
+  const library = tagLibrary(plan);
+  openEditor('Quản lý thẻ', 'Đổi tên giữ nguyên mã. Chỉ xóa định nghĩa không còn được gán; không tự gán thẻ cho khoản chi.',
+    field('Khóa thẻ', `<select name="manageKey"><option value="${NEW_TAG}">＋ Tạo khóa thẻ mới</option>${library.map(k => `<option value="${h(k.id)}">${h(k.name)}</option>`).join('')}</select>`, '', true) +
+    field('Tên khóa', '<input name="keyName" maxlength="160" required>', '', true) +
+    `<div id="managed-values" class="field full"></div>` +
+    `<div class="field full controls-left"><button type="button" class="button danger" data-delete-tag-key>Xóa khóa</button><button type="button" class="button danger" data-delete-tag-value>Xóa giá trị</button></div>`,
+    async f => {
+      const next = structuredClone(plan), definitions = tagLibrary(plan); let key = definitions.find(k => k.id === f.manageKey.value);
+      const name = uniqueTagName(f.keyName.value, definitions, key?.id);
+      if (key) key.name = name; else { key = { id: crypto.randomUUID(), name, values: [] }; definitions.push(key); }
+      if (f.manageValue.value) {
+        let value = key.values.find(v => v.id === f.manageValue.value);
+        const valueName = uniqueTagName(f.valueName.value, key.values, value?.id);
+        if (value) value.name = valueName; else { value = { id: crypto.randomUUID(), name: valueName }; key.values.push(value); }
+      }
+      next.tagDefinitions = definitions; await saveAndClose(next);
+    }, 'Lưu thẻ');
+  updateManagedKey();
+}
+function updateManagedKey() {
+  const f = $('#edit-form').elements, key = tagLibrary(plan).find(k => k.id === f.manageKey.value);
+  f.keyName.value = key?.name ?? '';
+  $('#managed-values').innerHTML = field('Giá trị', `<select name="manageValue"><option value="">Chỉ sửa khóa</option><option value="${NEW_TAG}">＋ Thêm giá trị mới</option>${(key?.values ?? []).map(v => `<option value="${h(v.id)}">${h(v.name)}</option>`).join('')}</select>`) + field('Tên giá trị', '<input name="valueName" maxlength="160">');
+  updateManagedValue();
+}
+function updateManagedValue() {
+  const f = $('#edit-form').elements, key = tagLibrary(plan).find(k => k.id === f.manageKey.value);
+  f.valueName.closest('label').hidden = !f.manageValue.value;
+  f.valueName.value = key?.values.find(v => v.id === f.manageValue.value)?.name ?? '';
+}
+async function deleteManagedTag(value = false) {
+  try {
+    const f = $('#edit-form').elements, keyId = f.manageKey.value, valueId = f.manageValue.value;
+    if (keyId === NEW_TAG || (value && (!valueId || valueId === NEW_TAG))) throw new Error('Chọn định nghĩa đã lưu để xóa.');
+    const next = removeTagDefinition(plan, keyId, value ? valueId : undefined);
+    confirmChange('Xóa định nghĩa thẻ không dùng?', 'Không đổi số tiền, đối tượng hoặc lịch đã lưu.', () => saveAndClose(next));
+  } catch (error) { $('#form-error').textContent = error.message; $('#form-error').hidden = false; }
 }
 function accountDialog(id, debt = false) {
   const source = debt ? plan.debtAccounts : plan.accounts, account = source.find(a => a.id === id);
@@ -277,7 +404,7 @@ function prepareMigration(raw, fromServer = false) {
     async () => { if (!migration.downloaded) throw new Error('Tải nguyên bản trước khi xác nhận.'); confirmChange('Thay kế hoạch bằng bản chuyển?', 'Hãy giữ nguyên bản xuất ở nơi an toàn. Việc chuyển chỉ giữ kế hoạch, năm-tháng, mã và các mốc ước tính; không chuyển thực tế hoặc suy đoán số dư tiền.', () => saveAndClose(migration.next, 'replace', !!serverLegacy)); }, 'Xem trước chuyển');
 }
 function helpDialog() {
-  openEditor('Hướng dẫn & khôi phục', 'Ước tính theo tháng, không phải kế toán.', `<div class="field full"><h3>Số tiền và số dư</h3><p>Số trống là chưa biết; 0 là đã biết. Nhập 5 nghĩa là 5.000 ₫, nhập 5000 VND là 5.000 ₫. Xem giá trị trước khi lưu. Số dư tài khoản dùng ngày Asia/Ho_Chi_Minh. Mốc mới đặt lại cơ sở gộp; không có mốc mới thì chuyển tiếp. Luôn tính cả kế hoạch tháng cập nhật.</p><h3>Thu chi và công nợ</h3><p>Đối tượng dùng chung, chi tiết thu/chi riêng. Lưu toàn bộ lịch thu/chi, kể cả trước hoặc sau kỳ dự báo; chỉ tính các tháng giao nhau. Đổi kỳ dự báo không cắt hay kéo dài lịch. Chỉnh ước tính từ tháng được chọn và giữ các mốc khác. Công nợ tách khỏi tiền mặt; kế hoạch trả nợ là chi, thu hồi là thu. Không tự giảm dư nợ, không ghi thực tế, tính lãi hoặc ngân hàng.</p><h3>Lưu & khôi phục</h3><p>Một JSON riêng tư trên laptop; mọi thành viên sửa như nhau. Laptop phải chạy và truy cập được qua Tailscale HTTPS riêng tư. Không có sao lưu tự động, không mã hóa ổ đĩa; laptop không phải bản sao lưu. Xuất JSON riêng, giữ an toàn.</p><p>Xung đột/lỗi lưu giữ bản sửa chưa lưu. Xuất trước khi đóng; đọc lại trạng thái trước khi thử lại. Nạp bản máy chủ rồi áp dụng lại bằng tay, không tự gộp. Tệp hỏng/độ bền chưa rõ cần người vận hành; không tự đặt lại hoặc chiếm khóa.</p>${button('Thay bằng mẫu tổng hợp…', 'demo', 'type="button" data-mutate')}</div>`, null);
+  openEditor('Hướng dẫn & khôi phục', 'Ước tính theo tháng, không phải kế toán.', `<div class="field full"><h3>Rõ chi: tháng, nhóm và thẻ</h3><p>Danh sách mặc định chỉ gồm khoản thuộc tháng đang xem. Dùng Xem tất cả lịch đã lưu để sửa khoản ngoài tháng. Ba mức nhóm chọn Đối tượng / người hoặc khóa thẻ khác nhau; Lặp lại / Một lần luôn trong cùng. Thiếu khóa đang nhóm sẽ vào Khác, không tự gán thẻ. Khoản mới bắt đầu không có thẻ; Thêm thẻ để chọn hoặc tạo khóa / giá trị. Gỡ thẻ chỉ bỏ gán; định nghĩa đang dùng không thể xóa. Khóa mới trong biểu mẫu chỉ lưu cùng khoản chi hợp lệ.</p><p>Công tắc Ẩn/Hiện số tiền cụ thể mặc định tắt cho trang và biểu mẫu khoản chi; bật để xem / nhập tiền. Tắt không xóa tiền đã nhập hay lịch sử và không phải kiểm soát quyền truy cập. Tháng, nhóm, tìm kiếm, mở/thu gọn và công tắc chỉ đổi góc nhìn, không lưu vào JSON.</p><h3>Số tiền và số dư</h3><p>Số trống là chưa biết; 0 là đã biết. Nhập 5 nghĩa là 5.000 ₫, nhập 5000 VND là 5.000 ₫. Xem giá trị trước khi lưu. Số dư tài khoản dùng ngày Asia/Ho_Chi_Minh. Mốc mới đặt lại cơ sở gộp; không có mốc mới thì chuyển tiếp. Luôn tính cả kế hoạch tháng cập nhật.</p><h3>Thu chi và công nợ</h3><p>Đối tượng dùng chung, chi tiết thu/chi riêng. Lưu toàn bộ lịch thu/chi, kể cả trước hoặc sau kỳ dự báo; chỉ tính các tháng giao nhau. Đổi kỳ dự báo không cắt hay kéo dài lịch. Chỉnh ước tính từ tháng được chọn và giữ các mốc khác. Công nợ tách khỏi tiền mặt; kế hoạch trả nợ là chi, thu hồi là thu. Không tự giảm dư nợ, không ghi thực tế, tính lãi hoặc ngân hàng.</p><h3>Lưu & khôi phục</h3><p>Một JSON riêng tư trên laptop; mọi thành viên sửa như nhau. Laptop phải chạy và truy cập được qua Tailscale HTTPS riêng tư. Không có sao lưu tự động, không mã hóa ổ đĩa; laptop không phải bản sao lưu. Xuất JSON riêng, giữ an toàn.</p><p>Xung đột/lỗi lưu giữ bản sửa chưa lưu. Xuất trước khi đóng; đọc lại trạng thái trước khi thử lại. Nạp bản máy chủ rồi áp dụng lại bằng tay, không tự gộp. Tệp hỏng/độ bền chưa rõ cần người vận hành; không tự đặt lại hoặc chiếm khóa.</p>${button('Thay bằng mẫu tổng hợp…', 'demo', 'type="button" data-mutate')}</div>`, null);
 }
 $('#editor').addEventListener('input', updatePreviews);
 $('#editor').addEventListener('close', restoreFocus);
@@ -287,7 +414,9 @@ $('#editor').addEventListener('submit', async e => {
   catch (error) { $('#form-error').textContent = error.message; $('#form-error').hidden = false; }
 });
 $('#confirm-form').addEventListener('submit', async e => { e.preventDefault(); const action = confirmAction; confirmAction = null; $('#confirm-dialog').close(); try { await action?.(); } catch (error) { if ($('#editor').open) { $('#form-error').textContent = error.message; $('#form-error').hidden = false; } else toast(error.message); } });
-$('#confirm-dialog').addEventListener('close', () => { confirmAction = null; });
+// A queued close event from the previous dialog must not clear a newly opened
+// confirmation (e.g. cancel an import, then immediately choose another file).
+$('#confirm-dialog').addEventListener('close', () => { if (!$('#confirm-dialog').open) confirmAction = null; });
 $('#login-form').addEventListener('submit', async e => {
   e.preventDefault(); const f = e.target.elements; $('#login-error').hidden = true;
   try {
@@ -326,9 +455,25 @@ $('#reconcile-button').addEventListener('click', async () => {
 $('#retry-button').addEventListener('click', async () => { if (!pending?.checked) return; const draft = pending; pending = null; await commit(draft.candidate, draft.operation, draft.migrationConfirmed); });
 $('#reload-button').addEventListener('click', () => confirmChange('Nạp bản máy chủ?', 'Bản chưa lưu sẽ rời bộ nhớ. Xuất trước. Ô biểu mẫu được giữ để kiểm tra/áp dụng lại bằng tay.', load));
 $('#logout-button').addEventListener('click', () => confirmChange('Đăng xuất?', 'Bản chưa lưu sẽ rời bộ nhớ. Hãy xuất trước.', async () => { await api('/api/logout', { method: 'POST', body: '{}' }); location.reload(); }));
+document.addEventListener('input', e => {
+  if (e.target.id === 'expense-search') {
+    const position = e.target.selectionStart; expenseSearch = e.target.value; render();
+    const input = $('#expense-search'); input.focus(); if (position !== null) input.setSelectionRange(position, position);
+  }
+});
 document.addEventListener('change', e => {
-  if (e.target.id === 'include-tentative') { tentative = e.target.checked; render(); }
-  if (e.target.id === 'view-month') { selectedMonth = e.target.value; render(); }
+  if (e.target.hasAttribute('data-amount-visibility')) { showExpenseAmounts = e.target.checked; syncExpenseVisibility(); }
+  if (e.target.hasAttribute('data-group-level')) { const level = Number(e.target.dataset.groupLevel); expenseGroups[level] = e.target.value; renderAndFocus(`[data-group-level="${level}"]`); }
+  if (e.target.name === 'repeat' || e.target.name === 'expenseKind') updateScheduleFields();
+  if (e.target.hasAttribute('data-tag-key')) {
+    const row = e.target.closest('[data-tag-row]'), key = tagLibrary(plan).find(k => k.id === e.target.value);
+    row.querySelector('[data-tag-value-fields]').innerHTML = tagValueFields(key); updateTagRows();
+  }
+  if (e.target.hasAttribute('data-tag-value')) updateTagRows();
+  if (e.target.name === 'manageKey') updateManagedKey();
+  if (e.target.name === 'manageValue') updateManagedValue();
+  if (e.target.id === 'include-tentative') { tentative = e.target.checked; renderAndFocus('#include-tentative'); }
+  if (e.target.id === 'view-month') { selectedMonth = e.target.value; renderAndFocus('#view-month'); }
   // Effective-month changes load that occurrence's estimate, not a different month's amount.
   if (e.target.name === 'effectiveMonth' && $('#edit-form [name=amount]')) {
     const id = $('#edit-form').dataset.itemId, item = plan.items.find(i => i.id === id);
@@ -336,6 +481,10 @@ document.addEventListener('change', e => {
   }
 });
 document.addEventListener('click', e => {
+  if (e.target.closest('[data-add-tag]') && !blocked()) { $('#expense-tag-rows').insertAdjacentHTML('beforeend', tagRow()); updateTagRows(); $$('#editor [data-tag-key]').at(-1).focus(); return; }
+  if (e.target.closest('[data-remove-tag]') && !blocked()) { e.target.closest('[data-tag-row]').remove(); updateTagRows(); $('#editor [data-add-tag]').focus(); return; }
+  if (e.target.closest('[data-delete-tag-key]') && !blocked()) { void deleteManagedTag(); return; }
+  if (e.target.closest('[data-delete-tag-value]') && !blocked()) { void deleteManagedTag(true); return; }
   const close = e.target.closest('[data-close]'); if (close) { close.closest('dialog').close(); return; }
   const nav = e.target.closest('[data-view]'); if (nav) { view = nav.dataset.view; render(); return; }
   const disclosure = e.target.closest('[data-collapse], [data-collapse-all]');
@@ -343,8 +492,11 @@ document.addEventListener('click', e => {
   const target = e.target.closest('[data-action]'); if (!target) return;
   const { action, id, kind, object, month, debt, date } = target.dataset;
   if (target.hasAttribute('data-mutate') && blocked()) return;
+  if (action === 'tags') tagManager();
+  if (action === 'previous-month' || action === 'next-month') { const months = range(); selectedMonth = months[Math.max(0, Math.min(months.length - 1, months.indexOf(selectedMonth) + (action === 'next-month' ? 1 : -1)))]; render(); ($(`[data-action="${action}"]:not(:disabled)`) ?? $('#view-month')).focus({ preventScroll: true }); }
+  if (action === 'all-expense-schedules') { allExpenseSchedules = !allExpenseSchedules; renderAndFocus('[data-action=all-expense-schedules]'); }
   if (action === 'object') objectDialog(id);
-  if (action === 'item') { itemDialog({ id, kind, objectId: object, month: month ?? selectedMonth }); $('#edit-form').dataset.itemId = id ?? ''; }
+  if (action === 'item') { itemDialog({ id, kind, objectId: object, month: month ?? selectedMonth, repeatKind: target.dataset.repeatKind }); }
   if (action === 'delete-object') {
     if (plan.items.some(i => i.objectId === id)) return toast('Đối tượng còn chi tiết; hãy chuyển hoặc xóa từng chi tiết trước.');
     confirmChange('Xóa đối tượng trống?', 'Không xóa bất kỳ chi tiết nào. Đối tượng dùng chung sẽ rời cả hai trang.', () => commit({ ...plan, objects: plan.objects.filter(o => o.id !== id) }));

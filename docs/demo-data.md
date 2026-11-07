@@ -46,6 +46,8 @@ Không có mốc tiền mặt mới sau tháng 11 nên số dư dự kiến chuy
 
 ### 2. Rõ chi — đối tượng, lịch và ước tính theo thời gian
 
+Rõ chi mặc định chỉ liệt kê khoản thuộc **Tháng xem**; chọn **Xem tất cả lịch đã lưu** để tìm khoản của tháng khác. Bật **Ẩn/Hiện số tiền cụ thể** trên trang hoặc biểu mẫu để xem/nhập tiền và tháng hiệu lực; tắt không xóa số tiền hay mốc đã lưu. Ba mức nhóm có thể chọn đối tượng hoặc khóa thẻ, mặc định Đối tượng → Lặp lại / Một lần. Các lựa chọn này chỉ đổi góc nhìn, không lưu tài chính. Mẫu gốc không tự gán thẻ; Danh mục / Mức cần thiết chỉ là định nghĩa khởi đầu khi chưa có thư viện. Xem [hướng dẫn MS-004](ms-004.md).
+
 Mở các đối tượng. Có đúng bốn **Cá nhân**: Minh (chồng · mẫu), Lan (vợ · mẫu), An (con · mẫu), Bình (con · mẫu); một **Nhóm** Gia đình (mẫu); bốn **Danh mục** Nhà ở, Sinh hoạt, Đi lại, Dự phòng. Không có tuổi, tài khoản đăng nhập hay thông tin định danh thật. Mỗi người có khoản chi; loại đối tượng không thay quyền hay phép tính.
 
 Kiểm tra mười khoản chi thường kỳ, đều **hằng tháng 11/2026–12/2027**:

@@ -81,3 +81,44 @@ The unperformed runtime line below describes the original four-phase implementat
 - Real Tailscale HTTPS/ACL/device denial, host trust/firewall changes, hardware power-loss testing, other browsers or physical phones.
 - Real-data/secret access, actual plan migration, off-machine backup, merge/push/release or checkout return.
 - All **16 human UAT scenarios remain Not run**: [uat.md](uat.md). Operator rollout and Sinh acceptance are separate actions.
+
+## MS-004 — local implementation checks
+
+Scope: [monthly Expenses, structured tags and amount visibility](ms-004.md). Explicit local P1–P4 implementation/test/commit authorization was confirmed in `d-97f1cd`. External r001 requirements/UAT/matrix approval remains pending; these are implementation checks, not native promotion or an independently admitted exact-SHA review. Existing MS-001/MS-002 evidence above remains historical.
+
+| Phase | Commit | Scope |
+|---|---|---|
+| P1 | `fc42997` | Optional-v3 tags, absent-only starters, strict shared validation and pure monthly grouping; 38 targeted tests passed |
+| P2 | `f5f8d82` | Helper asset allowlist; atomic store/API, CAS/invalid/declined/restart/empty-library regression fixtures; 35 tests passed |
+| P3 | `e930d2d` | Monthly UI, three grouping slots/fixed type, inline tags/management, dynamic schedules, money-only switches; 92 Node tests, 32 browser groups/127 axe scans passed |
+| P4 | Commit titled `test(MS-004): complete integration coverage and feature handoff` | Fixture/payload/collision bounds, retained view-control focus, queued-confirmation-close regression, shared row-library projection, in-app help and documentation/UAT addendum |
+
+Final pre-P4-commit checks were run on Linux/x64 with Node **v22.23.4**, npm **10.9.9**, Chrome **156.0.8078.79**, Playwright **1.63.0**, axe **4.11.1**. Existing canonical development dependencies matched the worktree lockfile and were reused through a temporary local symlink; no install, lockfile change or runtime dependency was added. All servers/stores/browser contexts were owned synthetic fixtures, ephemeral loopback ports only; no existing 3080/3081 service, household record, credential or real-data migration was accessed.
+
+| Local command (r001 seven-command forms) | Actual result |
+|---|---|
+| `npm run check` | Exit 0, including `public/expense-tags.js` syntax |
+| `node --test test/expense-tags.test.mjs test/model.test.mjs test/amount-input.test.mjs test/accounts-debts.test.mjs test/demo-data.test.mjs` | Exit 0; **40/40** |
+| `node --test test/server.test.mjs test/persistence.test.mjs test/auth.test.mjs` | Exit 0; **35/35** |
+| `node --test test/deployment.test.mjs test/local-stack.test.mjs` | Exit 0; **7/7**; no container deployment |
+| `npm test` | Exit 0; **94/94**, zero failures/skips/cancellations/todo |
+| `test -n "$(command -v google-chrome)" && BROWSER_PATH="$(command -v google-chrome)" BROWSER_ARTIFACTS="$(mktemp -d /tmp/ms004-browser.XXXXXX)" npm run test:browser` | Exit 0; **33 groups / 127 axe scans**, zero detected violations/page errors/external requests |
+| `git diff --check` | Exit 0 |
+
+Ephemeral logs: `/tmp/ms004-p4-{syntax,model,store,deployment,all,browser}-final.log`. Browser report/screenshots/synthetic exports: `/tmp/ms004-browser.JiOscV/`. These paths are temporary evidence, not durable release artifacts. The seven commands are rerun after the P4 commit before handoff; no independent workflow authority is inferred from their exit codes.
+
+Coverage includes November 8/December 4 occurrences, known 12,050,000 + 2 unknown versus tentative 13,850,000 + 2, grouping permutations/one membership/Khác/empty objects, exact starter names, no view-only PUTs, explicit-empty/old-v3 compatibility, optional tag rows/definitions, atomic cancellation/invalid/declined/conflict handling, identity-preserving rename/protected deletion, imported IDs named `new`, NFC/code-point/case/name rules, payload limit, once/monthly/yearly/custom schedules, hidden invalid and zero/unknown/literal amounts, December estimate with earlier/later history, tagged restart/export/import, five widths and keyboard/focus/reload defaults. Existing demo, Income, calendar, cash/debt, auth/CAS, legacy-original and fault/recovery tests pass.
+
+An additional isolated check loaded the **actual pre-MS-004 model source from base `dcb139580444efc0a5b51afdaa8050bbdb087a13`** through a data module, using unchanged legacy/demo imports: old untagged fixture accepted, tagged v3 rejected with the strict unsupported-field error, input unchanged. No old reader stripped fields or touched a saved store. Starter ID collision-chain regression also verifies allocated IDs remain within the 80-character bound.
+
+### Failures retained, then repaired
+
+P3 browser attempts `/tmp/ms004-p3-browser-01.log` through `-09.log` and their `/tmp/ms004-browser.*` failure artifacts were retained. Initial failures exposed outdated harness assumptions (all schedules shown by default, visible money, option-disabled assertions and row ordering); the harness now explicitly selects the intended view/identity. A later import-confirmation timeout exposed a queued old close event clearing a new confirmation callback; the product guard and a deterministic browser regression repair that race. A PA output-safety hook rejected an ambiguous dynamic log destination before execution; final checks use explicit `/tmp/ms004-p4-*.log` paths. No failed run is represented as passing.
+
+### Accessibility finding and agent observation
+
+The recorded final browser run has **109/127 scans with incomplete color-contrast results** (including obscured/off-viewport text and short icon content). Every incomplete node/reason is retained in `report.json` under an explicit **open manual-review finding for Sinh**, not counted as passing contrast evidence. No human accessibility certification, Critical/Major clearance or accepted/deferred severity disposition is claimed.
+
+Inspected actual synthetic desktop grouping/form and narrow-screen month/form/tag-row screenshots. Observed month context above summaries, readable stacked controls, adjacent native switch/label, visible keyboard focus, retained inline tag fields and save/remove actions, without unintended horizontal overflow in automated checks. This is agent screenshot observation only; it does not resolve every incomplete contrast result or substitute for human UAT/physical-device testing.
+
+All **16 MS-004 human UAT scenarios remain Not run**; see the [addendum](uat.md#ms-004--human-uat-addendum-not-executed). Formal r001/native package and matrix approval, independent exact-SHA review, real-device/network checks, rollout, merge/push and checkout return remain separate and unperformed.

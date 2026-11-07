@@ -14,6 +14,7 @@ const assets = new Map([
   ['/demo-data.js', ['demo-data.js', 'text/javascript; charset=utf-8']],
   ['/legacy-model.js', ['legacy-model.js', 'text/javascript; charset=utf-8']],
   ['/amount-input.js', ['amount-input.js', 'text/javascript; charset=utf-8']],
+  ['/expense-tags.js', ['expense-tags.js', 'text/javascript; charset=utf-8']],
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']],
   ['/favicon.svg', ['favicon.svg', 'image/svg+xml']]
 ]);

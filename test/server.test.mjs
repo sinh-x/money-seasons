@@ -4,6 +4,7 @@ import http from 'node:http';
 import { testApp } from '../scripts/fixture-support.mjs';
 import { blankPlan, demoPlan, convertLegacy, forecast } from '../public/model.js';
 import { demoPlan as legacyDemo } from '../public/legacy-model.js';
+import { tagLibrary } from '../public/expense-tags.js';
 import { readFile, writeFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -14,13 +15,13 @@ const put = (headers, expectedRevision, plan, extras = {}) => fetch(`${base}/api
 
 test('health/assets/HEAD retain types and safety headers; private files never served', async () => {
   assert.deepEqual(await (await fetch(`${base}/healthz`)).json(), { status: 'ok', app: 'money-seasons', version: '0.3.0' });
-  for (const [url, type] of [['/', 'text/html'], ['/app.js', 'text/javascript'], ['/model.js', 'text/javascript'], ['/demo-data.js', 'text/javascript'], ['/styles.css', 'text/css'], ['/favicon.svg', 'image/svg+xml']]) {
+  for (const [url, type] of [['/', 'text/html'], ['/app.js', 'text/javascript'], ['/model.js', 'text/javascript'], ['/demo-data.js', 'text/javascript'], ['/expense-tags.js', 'text/javascript'], ['/styles.css', 'text/css'], ['/favicon.svg', 'image/svg+xml']]) {
     const r = await fetch(`${base}${url}`);
     assert.equal(r.status, 200); assert.ok(r.headers.get('content-type').startsWith(type));
     assert.equal(r.headers.get('x-content-type-options'), 'nosniff'); assert.equal(r.headers.get('cache-control'), 'no-store');
     assert.ok(r.headers.get('content-security-policy').includes("frame-ancestors 'none'")); assert.ok((await r.text()).length);
   }
-  for (const url of ['/', '/demo-data.js']) {
+  for (const url of ['/', '/demo-data.js', '/expense-tags.js']) {
     const head = await fetch(base + url, { method: 'HEAD' }); assert.equal(head.status, 200); assert.equal(await head.text(), '');
     assert.equal(head.headers.get('x-content-type-options'), 'nosniff');
     if (url.endsWith('.js')) assert.match(head.headers.get('content-type'), /^text\/javascript/);
@@ -89,6 +90,33 @@ test('family demo is explicit revisioned replacement, persists exactly, stale re
   assert.equal((await save(a, saved.revision, demoPlan())).status, 409);
   assert.deepEqual(await readFile(file), newerBytes); assert.deepEqual((await get(a)).plan, newer);
   const exported = await (await fetch(isolated.base + '/api/export', { headers: a })).json(); assert.deepEqual(exported, newer);
+});
+
+test('expense definitions and assignments commit atomically, export/import losslessly and reject stale/invalid writes', async t => {
+  const isolated = await testApp(); t.after(() => isolated.close());
+  const a = await isolated.login(), b = await isolated.login();
+  const get = () => fetch(isolated.base + '/api/plan', { headers: a }).then(r => r.json());
+  const save = (headers, plan, revision, confirmed = true) => fetch(isolated.base + '/api/plan', { method: 'PUT', headers, body: JSON.stringify({ plan, expectedRevision: revision, operation: 'replace', confirmed }) });
+  const original = demoPlan(); assert.equal((await save(a, original, 0)).status, 200);
+  const before = await get(), filename = path.join(isolated.directory, 'data', 'plan.json'), bytes = await readFile(filename);
+  for (const url of ['/expense-tags.js', '/api/plan', '/api/export']) assert.equal((await fetch(isolated.base + url, { headers: a })).status, 200);
+  assert.deepEqual(await readFile(filename), bytes); assert.deepEqual(await get(), before);
+  const candidate = structuredClone(original); candidate.tagDefinitions = tagLibrary(candidate);
+  const expense = candidate.items.find(i => i.type === 'expense'), key = candidate.tagDefinitions[0];
+  expense.tags = [{ keyId: key.id, valueId: key.values[0].id }];
+  assert.equal((await save(a, candidate, before.revision, false)).status, 400); assert.deepEqual(await get(), before);
+  const invalid = structuredClone(candidate); invalid.items.find(i => i.id === expense.id).tags[0].valueId = 'missing';
+  assert.equal((await save(a, invalid, before.revision)).status, 400); assert.deepEqual(await readFile(filename), bytes);
+  assert.equal((await save(a, candidate, before.revision)).status, 200);
+  const acknowledged = await get(); assert.deepEqual(acknowledged.plan, candidate); assert.equal(acknowledged.revision, before.revision + 1);
+  const stale = structuredClone(candidate); stale.tagDefinitions.push({ id: 'stale-key', name: 'Stale', values: [] });
+  assert.equal((await save(b, stale, before.revision)).status, 409); assert.deepEqual(await get(), acknowledged);
+  const exported = await (await fetch(isolated.base + '/api/export', { headers: a })).json(); assert.deepEqual(exported, candidate);
+  assert.equal((await save(a, exported, acknowledged.revision)).status, 200); assert.deepEqual((await get()).plan, candidate);
+  const deleted = structuredClone(candidate); deleted.tagDefinitions = [];
+  const latest = await get(); assert.equal((await save(a, deleted, latest.revision)).status, 400); assert.deepEqual(await get(), latest);
+  const explicitEmpty = structuredClone(original); explicitEmpty.tagDefinitions = [];
+  assert.equal((await save(a, explicitEmpty, latest.revision)).status, 200); assert.deepEqual((await get()).plan.tagDefinitions, []);
 });
 
 test('invalid JSON, schema, unsupported version, totals and oversized bodies preserve revision', async () => {

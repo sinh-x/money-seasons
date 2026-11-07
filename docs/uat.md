@@ -30,3 +30,28 @@ Record candidate commit, environment, date, expected/observed results and Sinh's
 - Real private-device access / runtime qualification: **pending operator evidence**.
 - Real-data migration: **not performed; separate authorization required**.
 - Independent exact-source/FeatureSHA review and native workflow promotion: **not claimed**.
+
+## MS-004 — human UAT addendum (not executed)
+
+Use the separately retained external **r001 requirements.md / uat-preview.md** for full wording; neither is silently approved by local implementation. Basis, schema and safe synthetic setup: [ms-004.md](ms-004.md). Use only an owned disposable store/profile, not running 3080/3081 services or household records. The fixture in `scripts/expense-fixture.mjs` is test-only; it is distinct from the unchanged Minh–Lan learning demo.
+
+| r001 TS / AC | Task / expected result | Human status |
+|---|---|---|
+| 1 | At 320/360/390/768/1440, month navigation precedes summaries. November 8 rows, December 4. All-schedules exposes inactive entries without phantom monthly totals. | Not run |
+| 2 | Zero to three distinct Object/tag dimensions in any order; blanks skipped; repeated/once always innermost. | Not run |
+| 3 | Category → Object → necessity: one row per matching expense, unchanged owners, virtual Khác at each missing-key level. Default Object view keeps empty Grandparents. | Not run |
+| 4 | Absent library shows exact 12 category + 2 necessity starters, including Quần áo; no PUT or auto-assignment. Explicit-empty/edited libraries never reseed. | Not run |
+| 5 | New/grouped Add starts with zero tags. Add/select/create/remove rows; edits show assigned tags only. Distinct keys, one value/key; NFC/trim/case uniqueness and 1–40-code-point names. | Not run |
+| 6 | Cancel/remove/invalid/declined saves create no shared definitions. Valid expense+definitions save together. Stale 409 keeps acknowledged server plan and complete unsaved candidate/export, no auto-merge. | Not run |
+| 7 | Rename key/value keeps IDs and links. Referenced deletion blocked. Unassign, save, then explicitly delete unused definitions. | Not run |
+| 8 | Once: only one month, no end/frequency/N. Repeat: monthly 1/yearly 12/custom integer 1–120; applicable fields only, retained draft inputs, invalid/orphaning schedules blocked. | Not run |
+| 9 | Exact synchronized Ẩn/Hiện số tiền cụ thể, initially off. Same non-money UI/actions/counts/fields. Submit always Lưu chi phí; rejected helper copy absent. | Not run |
+| 10 | Blank = unknown, 0 known, 5 → 5000, 5tr → 5000000, 5000 VND → 5000; reopen without rescaling. Hide/save keeps values; hidden invalid text reports error with no write. | Not run |
+| 11 | November 3000000, January 3200000; change December to 3100000. Preserve earlier/later points and cancel no-op; orphaning January rejected. | Not run |
+| 12 | Old untagged v3 fields/forecasts unchanged, no implicit save/classification; explicit-empty retained. v1/v2 original/confirmation retained. Old strict readers reject tags, never strip. | Not run |
+| 13 | Tags/IDs and all old fields survive save/restart/export/import. Dangling/duplicate/oversize/stale requests preserve acknowledged state. | Not run |
+| 14 | Month/group/search/disclosure/visibility sends zero PUTs and changes no plan/revision/export. Search not summaries; keyboard collapse; reload restores defaults. | Not run |
+| 15 | Keyboard Tab/Enter/Space/Escape, visible/restored focus, labels/state and no overflow at all five widths. Review every recorded axe incomplete contrast finding; no certification inferred from zero detected violations. | Not run |
+| 16 | Review local seven-command evidence separately from independent exact-SHA review. Income, calendar/carry, cash/debt, tentative, out-of-window history, auth/CAS/recovery and 19-item/9-object Minh–Lan demo unchanged; tags do not change forecast arithmetic. | Not run |
+
+MS-004 reviewer/date/candidate/decision: **pending**. All 16 human scenarios, incomplete accessibility review, formal r001 package/matrix approval, independent review and separately authorized rollout remain open. Local automated results are not human sign-off.
