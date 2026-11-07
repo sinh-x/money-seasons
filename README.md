@@ -12,6 +12,8 @@ The [MS-001 wrap-up handoff](docs/ms-001-wrap-up.md) records the explicit local 
 
 [Monthly Expenses, structured tags and optional money display](docs/ms-004.md) are implemented locally in P1–P4 with phase commits at Sinh's explicit request. The external r001 review pair remains unapproved; no independent review, human UAT, merge, push or service deployment is implied. Existing running stacks are not updated by these commits.
 
+The separately requested [MS-004 local integration handoff](docs/ms-004-wrap-up.md) records the completed implementation, fresh pre-merge checks, previously authorized localhost preview update and remaining UAT/operational limits. Local integration is not a push, release or formal acceptance.
+
 ## Fictional family learning demo
 
 Explore all five workspaces with **Minh, Lan, An and Bình** using the [family demo learning guide](docs/demo-data.md). The repo-shipped sample has 9 objects and 19 entries, literal VND, fixed November 2026–December 2027 schedules, cash history and separate debts. It includes unknown, zero, tentative and forward-estimate examples.
