@@ -1,26 +1,30 @@
-# Standalone local synthetic stack: do not merge this with compose.yaml.
-name: money-seasons-local-test
+# Standalone worktree development stack; invoke through scripts/local-stack.mjs only.
+name: ${MS_DEV_PROJECT:?Use the scoped local-stack command}
 services:
   web:
-    build: .
-    image: money-seasons-local-test-web:latest
+    build:
+      context: .
+      labels:
+        org.money-seasons.instance: ${MS_DEV_ID:?}
+    image: ${MS_DEV_PROJECT:?}-web:dev
+    pull_policy: never
     environment:
       MONEY_SEASONS_DATA_DIR: /data
       MONEY_SEASONS_PASSPHRASE_FILE: /run/private/passphrase
-      MONEY_SEASONS_ORIGINS: https://localhost:3081
+      MONEY_SEASONS_ORIGINS: https://localhost:${MS_DEV_PORT:?}
+      MONEY_SEASONS_COOKIE_NAME: ${MS_DEV_COOKIE:?}
     volumes:
       - type: bind
-        source: ${HOME}/.local/share/money-seasons-local-test/data
+        source: ${MS_DEV_DATA:?}
         target: /data
         bind:
           create_host_path: false
       - type: bind
-        source: ${HOME}/.local/share/money-seasons-local-test/passphrase
+        source: ${MS_DEV_STATE:?}/passphrase
         target: /run/private/passphrase
         read_only: true
         bind:
           create_host_path: false
-    # No app port is published: only Caddy can reach it over this private bridge.
     networks: [backend]
     init: true
     restart: unless-stopped
@@ -31,7 +35,7 @@ services:
     mem_limit: 128m
     pids_limit: 64
     labels:
-      org.money-seasons.purpose: local-synthetic-test
+      org.money-seasons.instance: ${MS_DEV_ID:?}
     logging:
       driver: json-file
       options: {max-size: 5m, max-file: "2"}
@@ -39,13 +43,16 @@ services:
     build:
       context: ./ops
       dockerfile: Dockerfile.caddy-local
-    image: money-seasons-local-test-caddy:2.10.2
+      labels:
+        org.money-seasons.instance: ${MS_DEV_ID:?}
+    image: ${MS_DEV_PROJECT:?}-caddy:dev
+    pull_policy: never
     user: "1000:1000"
-    # Leave room for health-check exec processes under the retained 64-PID cap.
     environment:
       GOMAXPROCS: "2"
+      MS_DEV_PORT: ${MS_DEV_PORT:?}
     ports:
-      - "127.0.0.1:3081:3081"
+      - "127.0.0.1:${MS_DEV_PORT:?}:${MS_DEV_PORT:?}"
     networks: [edge, backend]
     depends_on:
       web:
@@ -58,7 +65,7 @@ services:
         bind:
           create_host_path: false
       - type: bind
-        source: ${HOME}/.local/share/money-seasons-local-test/caddy
+        source: ${MS_DEV_STATE:?}/caddy
         target: /data
         bind:
           create_host_path: false
@@ -72,9 +79,9 @@ services:
     mem_limit: 128m
     pids_limit: 64
     labels:
-      org.money-seasons.purpose: local-synthetic-test
+      org.money-seasons.instance: ${MS_DEV_ID:?}
     healthcheck:
-      test: [CMD, wget, -q, --no-check-certificate, -O, /dev/null, "https://localhost:3081/healthz"]
+      test: [CMD, wget, -q, --no-check-certificate, -O, /dev/null, "https://localhost:${MS_DEV_PORT:?}/healthz"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -83,8 +90,10 @@ services:
       driver: json-file
       options: {max-size: 5m, max-file: "2"}
 networks:
-  # Docker suppresses published ports on an internal-only network. Caddy alone
-  # joins this dedicated edge bridge; publication is still strictly loopback.
-  edge: {}
+  edge:
+    labels:
+      org.money-seasons.instance: ${MS_DEV_ID:?}
   backend:
     internal: true
+    labels:
+      org.money-seasons.instance: ${MS_DEV_ID:?}

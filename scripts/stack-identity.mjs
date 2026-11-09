@@ -102,6 +102,7 @@ export function identityFor(binding) {
 }
 export async function loadInstance({ root = checkout, home = os.homedir(), port, create = false } = {}) {
   if (process.getuid() !== 1000) fail('Development containers require host UID 1000');
+  if (port !== undefined) devPort(port);
   const identity = await worktreeIdentity(root);
   const parent = path.join(home, '.local/share/money-seasons-dev');
   // Only newly created ancestors receive private modes; existing unsafe ones are never repaired.
@@ -114,21 +115,24 @@ export async function loadInstance({ root = checkout, home = os.homedir(), port,
   const base = path.join(parent, identity.id);
   if (create) await privateDir(base, true); else await privateDir(base);
   const manifest = path.join(base, 'instance.json');
+  let existing;
   try {
     const state = JSON.parse((await readPrivate(manifest)).toString('utf8'));
     for (const [key, value] of Object.entries(identity)) if (state[key] !== value) fail('Foreign/replaced worktree manifest refused');
     if (state.version !== 1 || devPort(state.port) !== state.port || (port !== undefined && devPort(port) !== state.port)) fail('Manifest/port mismatch; port changes require a separate instance');
-    return { ...state, base, manifest };
+    if (state.selected !== null && (typeof state.selected !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(state.selected))) fail('Invalid selected dataset');
+    existing = state;
   } catch (e) {
     if (e.code !== 'ENOENT' || !create) throw e;
   }
-  const selectedPort = devPort(port);
+  const selectedPort = existing ? existing.port : devPort(port);
   // Full identity and port collision check, including a truncated Docker prefix collision.
   for (const entry of await fs.readdir(parent)) {
     if (entry === identity.id || entry === 'registry.lock') continue;
     const peer = JSON.parse((await readPrivate(path.join(parent, entry, 'instance.json'))).toString('utf8'));
     if (peer.project === identity.project || peer.id === identity.id || peer.port === selectedPort) fail('Existing instance identity/port collision');
   }
+  if (existing) return { ...existing, base, manifest };
   const state = { version: 1, ...identity, port: selectedPort, selected: null };
   await exclusiveFile(manifest, JSON.stringify(state) + '\n'); await syncDir(base); await syncDir(parent);
   return { ...state, base, manifest };

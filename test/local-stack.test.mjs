@@ -1,48 +1,72 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, mkdtemp, rm, stat, chmod, symlink, unlink } from 'node:fs/promises';
+import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { loadInstance } from '../scripts/stack-identity.mjs';
+import { dockerEnvironment, composeArgs, prepareRuntime, verifyContainer, inventory, lifecycle, expectedMounts } from '../scripts/local-stack.mjs';
 
-test('local Caddy stack is a separate loopback-only internal project with no app host port', async () => {
-  const source = await readFile('compose.local.yaml', 'utf8');
-  assert.match(source, /name: money-seasons-local-test/);
-  assert.match(source, /image: money-seasons-local-test-web:latest/);
-  assert.match(source, /127\.0\.0\.1:3081:3081/);
-  assert.match(source, /MONEY_SEASONS_ORIGINS: https:\/\/localhost:3081/);
-  assert.match(source, /backend:\s+internal: true/);
-  assert.match(source, /networks: \[backend\]/);
-  assert.match(source, /networks: \[edge, backend\]/);
-  assert.doesNotMatch(source.split('  caddy:')[0], /^\s+ports:/m);
-  assert.match(source, /user: "1000:1000"/);
-  const caddy = source.split('  caddy:')[1];
-  assert.match(caddy, /GOMAXPROCS: "2"/); // Bound Go threads without weakening the PID safety limit.
-  assert.match(caddy, /pids_limit: 64/);
-  assert.match(source, /image: money-seasons-local-test-caddy:2\.10\.2/);
-  const caddyImage = await readFile('ops/Dockerfile.caddy-local', 'utf8');
-  assert.match(caddyImage, /FROM caddy:2\.10\.2-alpine@sha256:[a-f0-9]{64}/);
-  assert.match(caddyImage, /RUN setcap -r \/usr\/bin\/caddy/);
-  assert.match(caddyImage, /USER 1000:1000/);
-  assert.equal((source.match(/read_only: true/g) || []).length, 4); // two roots + two read-only config/secret mounts
-  assert.doesNotMatch(source, /network_mode:|external:|privileged:|3080:3080/);
-  const config = await readFile('ops/Caddyfile.local', 'utf8');
-  for (const expected of ['admin off', 'auto_https disable_redirects', 'skip_install_trust', 'tls internal', 'reverse_proxy web:3080']) assert.ok(config.includes(expected));
-  assert.doesNotMatch(config, /header_up\s+Host|acme|funnel/i);
+const instance = { id: 'a'.repeat(64), project: `ms-dev-${'a'.repeat(24)}`, port: 43003, base: '/private/a', worktree: '/checkout/a', cookieName: `ms_dev_${'a'.repeat(64)}` };
+function container(service = 'web') {
+  return { Id: 'owned', Config: { Image: `${instance.project}-${service}:dev`, Labels: { 'org.money-seasons.instance': instance.id, 'com.docker.compose.project': instance.project, 'com.docker.compose.service': service } },
+    Mounts: expectedMounts(instance, '/private/a/data', service).map(([Destination, Source, RW]) => ({ Type: 'bind', Destination, Source, RW })),
+    HostConfig: { PortBindings: service === 'web' ? {} : { '43003/tcp': [{ HostIp: '127.0.0.1', HostPort: '43003' }] } },
+    NetworkSettings: { Networks: Object.fromEntries(['backend', ...(service === 'caddy' ? ['edge'] : [])].map(n => [`${instance.project}_${n}`, {}])) }, State: { Running: false, Status: 'exited' } };
+}
+test('worktree Compose retains loopback, internal app and hardening with required namespaces', async () => {
+  const source = await fs.readFile('compose.local.yaml', 'utf8');
+  assert.match(source, /name: \$\{MS_DEV_PROJECT:\?/); assert.match(source, /image: \$\{MS_DEV_PROJECT:\?\}-web:dev/);
+  assert.match(source, /127\.0\.0\.1:\$\{MS_DEV_PORT:\?\}:\$\{MS_DEV_PORT:\?\}/);
+  assert.match(source, /MONEY_SEASONS_COOKIE_NAME: \$\{MS_DEV_COOKIE:\?\}/);
+  assert.match(source, /backend:\s+internal: true/); assert.match(source, /networks: \[backend\]/);
+  assert.match(source, /networks: \[edge, backend\]/); assert.doesNotMatch(source.split('  caddy:')[0], /^\s+ports:/m);
+  for (const expected of ['GOMAXPROCS: "2"', 'pids_limit: 64', 'user: "1000:1000"', 'cap_drop: [ALL]', 'no-new-privileges:true', 'mem_limit: 128m']) assert.ok(source.includes(expected));
+  assert.equal((source.match(/read_only: true/g) || []).length, 4);
+  assert.doesNotMatch(source, /money-seasons-local-test|3081|\$\{HOME\}|external:|privileged:/);
+  const config = await fs.readFile('ops/Caddyfile.local', 'utf8');
+  for (const expected of ['admin off', 'skip_install_trust', 'tls internal', 'https://localhost:{$MS_DEV_PORT}', 'reverse_proxy web:3080']) assert.ok(config.includes(expected));
+  const image = await fs.readFile('ops/Dockerfile.caddy-local', 'utf8');
+  assert.match(image, /RUN setcap -r/); assert.match(image, /USER 1000:1000/);
 });
-
-test('local bootstrap creates private state, preserves credentials and refuses unsafe existing files', async t => {
-  const home = await mkdtemp(path.join(os.tmpdir(), 'ms-local-bootstrap-'));
-  t.after(() => rm(home, { recursive: true, force: true }));
-  const run = () => spawnSync(process.execPath, ['scripts/local-stack.mjs', 'init'], { env: { ...process.env, HOME: home }, encoding: 'utf8' });
-  if (process.getuid() !== 1000) { assert.equal(run().status, 1); return; }
-  const first = run(); assert.equal(first.status, 0, first.stderr);
-  const base = path.join(home, '.local/share/money-seasons-local-test'), secret = path.join(base, 'passphrase');
-  assert.equal((await stat(base)).mode & 0o777, 0o700);
-  assert.equal((await stat(path.join(base, 'data'))).mode & 0o777, 0o700);
-  assert.equal((await stat(secret)).mode & 0o777, 0o600);
-  const original = await readFile(secret, 'utf8'); assert.ok(original.trim().length >= 12); assert.ok(!first.stdout.includes(original.trim()));
-  assert.equal(run().status, 0); assert.equal(await readFile(secret, 'utf8'), original);
-  await chmod(secret, 0o644); assert.equal(run().status, 1); assert.equal(await readFile(secret, 'utf8'), original);
-  await chmod(secret, 0o600); await unlink(secret); await symlink('/dev/null', secret); assert.equal(run().status, 1);
+test('Docker argv/environment cannot inherit production, project or dotenv overrides', () => {
+  process.env.COMPOSE_PROJECT_NAME = 'money-seasons'; process.env.MS_DEV_PROJECT = 'money-seasons'; process.env.MONEY_SEASONS_DATA_DIR = '/production';
+  try {
+    const env = dockerEnvironment(instance, '/private/a/data');
+    assert.equal(env.MS_DEV_PROJECT, instance.project); assert.equal(env.COMPOSE_PROJECT_NAME, undefined); assert.equal(env.MONEY_SEASONS_DATA_DIR, undefined);
+    const args = composeArgs(instance, ['down']); assert.ok(args.includes('/dev/null')); assert.ok(args.includes(instance.project)); assert.ok(!args.includes('money-seasons'));
+  } finally { delete process.env.COMPOSE_PROJECT_NAME; delete process.env.MS_DEV_PROJECT; delete process.env.MONEY_SEASONS_DATA_DIR; }
+});
+test('private runtime credentials are independent, stable, and unsafe files refuse', async t => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'ms-runtime-')); t.after(() => fs.rm(home, { recursive: true, force: true }));
+  const a = await loadInstance({ home, port: 43003, create: true }); await prepareRuntime(a);
+  const secret = path.join(a.base, 'passphrase'), before = await fs.readFile(secret);
+  await prepareRuntime(a); assert.deepEqual(await fs.readFile(secret), before);
+  assert.equal((await fs.stat(secret)).mode & 0o777, 0o600);
+  await fs.chmod(secret, 0o644); await assert.rejects(prepareRuntime(a)); assert.deepEqual(await fs.readFile(secret), before);
+});
+test('foreign labels/mounts/images/ports/networks refuse before lifecycle effects', () => {
+  for (const service of ['web', 'caddy']) assert.equal(verifyContainer(instance, '/private/a/data', container(service)), service);
+  for (const mutate of [c => { c.Config.Labels['org.money-seasons.instance'] = 'foreign'; }, c => { c.Config.Image = 'production'; }, c => { c.Mounts[0].Source = '/production'; }, c => { c.Mounts.push({ Type: 'volume' }); }, c => { c.HostConfig.PortBindings = { '3080/tcp': [] }; }, c => { c.NetworkSettings.Networks.production = {}; }]) {
+    const c = container(); mutate(c); assert.throws(() => verifyContainer(instance, '/private/a/data', c));
+  }
+});
+test('inventory refuses unowned Docker images/networks and unknown daemon errors', async () => {
+  await assert.rejects(inventory(instance, '/private/a/data', () => { throw new Error('daemon unknown'); }));
+  const run = args => {
+    if (args[0] === 'image' && args[1] === 'ls') return 'collision';
+    if (args[0] === 'image' && args[1] === 'inspect') return JSON.stringify([{ Config: { Labels: {} } }]);
+    return '';
+  };
+  await assert.rejects(inventory(instance, '/private/a/data', run), /image tag collision/);
+  await assert.rejects(inventory(instance, '/private/a/data', args => args[0] === 'network' && args.includes('--format') ? 'collision' : ''), /network name collision/);
+});
+test('missing selected data and invalid CLI options fail before Docker or bootstrap', async t => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'ms-command-')); t.after(() => fs.rm(home, { recursive: true, force: true }));
+  const a = await loadInstance({ home, port: 43003, create: true }); let called = false;
+  await assert.rejects(lifecycle(a, 'up', { run: () => { called = true; } })); assert.equal(called, false);
+  for (const args of [['init', '--port', '3080'], ['up', '--project', 'money-seasons'], ['reset'], ['clone', '--dataset', 'x', '--force', 'yes']]) {
+    const r = spawnSync(process.execPath, ['scripts/local-stack.mjs', ...args], { env: { ...process.env, HOME: home }, encoding: 'utf8' });
+    assert.equal(r.status, 1); assert.doesNotMatch(r.stdout, /synthetic-family-test-only/);
+  }
 });
