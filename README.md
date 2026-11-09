@@ -78,6 +78,10 @@ npm run local:down
 
 **Up rebuilds/deploys only this worktree.** No automatic source read, empty/demo seed, refresh or dataset deletion. Production is reserved to **127.0.0.1:3080**; legacy singleton **3081** and its storage remain untouched and are never adopted. Each physical checkout has independent images/networks/data/credentials/CA/cookies. The guide includes a synthetic two-worktree example; real private copies require separate operator authorization. Never put financial data or secrets in Git/logs/tickets. [Old local-stack evidence](docs/local-stack.md) is historical, not qualification of MS-006.
 
+## Canonical-main production Docker workflow
+
+Use the [tracked production workflow](docs/production-local.md) for the canonical checkout on `main`: `compose.yaml` plus `compose.production-local.yaml`, private pinned configuration, backend **127.0.0.1:3080** and local HTTPS **https://localhost:3443**. Use `npm run production:config`, `production:build`, `production:up`, `production:status` and `production:verify`; development `local:*` commands never deploy production. The future `/lichtaichinh/` gateway integration remains MS-003, not implemented by this local deployment.
+
 ## Operator setup (separate authorization)
 
 Node 22+ on Linux or Docker Compose; no runtime npm dependencies. Qualify with synthetic data first. Production Compose fixes its backend to `127.0.0.1:3080`; `MONEY_SEASONS_PORT` no longer overrides it. No production restart or gateway change is part of MS-006.
