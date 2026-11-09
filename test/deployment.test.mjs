@@ -8,7 +8,8 @@ test('Docker retains private loopback publication, read-only root, restricted pe
   const ignore = await readFile('.dockerignore', 'utf8');
   for (const source of ['server.mjs', 'persistence.mjs', 'auth.mjs']) assert.ok(ignore.includes('!' + source));
   assert.ok(ignore.startsWith('**\n')); // No exports, secrets, test credentials or dependencies in context.
-  assert.match(compose, /127\.0\.0\.1:\$\{MONEY_SEASONS_PORT:-3080\}:3080/);
+  assert.match(compose, /127\.0\.0\.1:3080:3080/);
+  assert.doesNotMatch(compose, /MONEY_SEASONS_PORT/);
   assert.match(compose, /read_only: true/); assert.match(compose, /no-new-privileges:true/);
   assert.match(compose, /cap_drop:\s+- ALL/);
   for (const value of ['MONEY_SEASONS_DATA_DIR: /data', 'target: /data', 'target: /run/private/passphrase', 'create_host_path: false', 'MONEY_SEASONS_ORIGINS:']) assert.ok(compose.includes(value));

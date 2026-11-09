@@ -15,7 +15,7 @@
     "local:up": "node scripts/local-stack.mjs up",
     "local:down": "node scripts/local-stack.mjs down",
     "local:status": "node scripts/local-stack.mjs ps",
-    "check": "node --check server.mjs && node --check persistence.mjs && node --check auth.mjs && node --check scripts/local-stack.mjs && node --check public/app.js && node --check public/model.js && node --check public/legacy-model.js && node --check public/amount-input.js && node --check public/expense-tags.js"
+    "check": "node --check server.mjs && node --check persistence.mjs && node --check auth.mjs && node --check scripts/local-stack.mjs && node --check scripts/stack-identity.mjs && node --check public/app.js && node --check public/model.js && node --check public/legacy-model.js && node --check public/amount-input.js && node --check public/expense-tags.js"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.11.1",

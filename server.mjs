@@ -96,7 +96,7 @@ export function createServer({ store, auth } = {}) {
 
 export async function startApplication(env = process.env) {
   const auth = await createAuth({ passphrase: await readPassphrase(env.MONEY_SEASONS_PASSPHRASE_FILE),
-    origins: env.MONEY_SEASONS_ORIGINS?.split(',').map(s => s.trim()) });
+    origins: env.MONEY_SEASONS_ORIGINS?.split(',').map(s => s.trim()), cookieName: env.MONEY_SEASONS_COOKIE_NAME });
   const store = await openStore(env.MONEY_SEASONS_DATA_DIR);
   const server = createServer({ store, auth });
   try {
