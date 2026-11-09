@@ -29,4 +29,9 @@ test('isolated gate binds exact private socket, daemon ID/root, empty resources 
   assert.equal(commands.filter(args => args[0] === 'image').length, 2);
   await assert.rejects(isolationPreflight({ ...env, MS_ISOLATION_DAEMON_ID: 'wrong' }, run), /mismatch/);
   await assert.rejects(isolationPreflight(env, args => args[0] === 'ps' ? 'foreign' : run(args)), /no containers/);
+  commands.length = 0;
+  assert.equal((await isolationPreflight({ ...env, MS_ISOLATION_MODE: 'shared-development' }, run)).mode, 'shared-development');
+  assert.deepEqual(commands.map(args => args[0]), ['info', 'image', 'image', 'compose']);
+  await assert.rejects(isolationPreflight({ ...env, MS_ISOLATION_MODE: 'unknown' }, run), /Unknown isolation mode/);
+  await assert.rejects(isolationPreflight({ ...env, MS_ISOLATION_MODE: 'shared-development' }, args => args[0] === 'info' ? JSON.stringify({ ID: 'fixture-id', DockerRootDir: daemonRoot, SecurityOptions: ['name=rootless'] }) : run(args)), /Rootless UID mapping/);
 });

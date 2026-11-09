@@ -4,7 +4,7 @@
 
 Production Compose reserves **127.0.0.1:3080** behind its existing private HTTPS gateway. Development rejects 3080 and **3081** (the historical singleton). This change does not restart or inspect production, change the gateway, adopt the singleton, or authorize household-data access. Never combine `compose.local.yaml` with production Compose. Use the scoped CLI, not hand-written Compose overrides.
 
-Requirements/UAT-plan r001 were directly approved; implementation and automated checks are **not independent review, release approval or human UAT**. See [verification](ms-006-verification.md) for actual results and unavailable checks. No reset/delete/refresh-in-place/merge/copy-back exists. A “reset” means clone a NEW dataset and explicitly select it after stopping; old copies remain recoverable.
+Requirements/UAT-plan r001 were directly approved; implementation and automated checks are **not independent review, release approval or human UAT**. The operator later explicitly approved scoped synthetic verification on the existing development daemon and pulling its missing Node base image. See [verification](ms-006-verification.md) for actual results and remaining checks. No reset/delete/refresh-in-place/merge/copy-back exists. A “reset” means clone a NEW dataset and explicitly select it after stopping; old copies remain recoverable.
 
 ## Prerequisites and identity
 
@@ -124,7 +124,7 @@ Teardown is **down only**. Dataset deletion, disk-space management, image prunin
 
 Run the seven commands from the approved plan (details in [verification](ms-006-verification.md)). `npm test` owns synthetic temp data; browser checks own ephemeral loopback servers/profiles, never existing endpoints. Test-only insecure HTTP cookies are excluded from the production image; production/default auth remains Secure/HttpOnly/SameSite=Strict and CSRF/origin enforced.
 
-The Docker harness requires explicit operator provision of an **exclusive empty daemon** on a private owned Unix socket and private Docker root, exact daemon ID, and cached exact Node/Caddy base images. It never starts a daemon, contacts a default endpoint, downloads missing bases, or substitutes real services:
+By default, the Docker harness requires an **exclusive empty daemon** on a private owned Unix socket and private Docker root, exact daemon ID, and cached exact Node/Caddy base images. It never starts a daemon, silently selects a default endpoint, downloads missing bases, or substitutes real services. Rootless Docker is rejected because its UID remapping does not satisfy the unchanged host/container UID1000 private-bind contract:
 
 ```sh
 export MS_ISOLATION_DOCKER_HOST=unix:///absolute/private/fixture-daemon/docker.sock
@@ -133,6 +133,10 @@ export MS_ISOLATION_DOCKER_ROOT=/absolute/private/fixture-daemon/data
 node scripts/stack-isolation-check.mjs --synthetic-only
 ```
 
-Preflight binds socket/ID/root, checks no existing containers/volumes/foreign networks, and verifies cached bases. The harness copies code into two equal-basename synthetic source roots (no Git checkout lifecycle), starts protected synthetic source P plus A/B on nonreserved ephemeral ports, verifies real TLS using each CA, edits/migrates/selects copies and performs **five A rebuild/down/up cycles**, comparing P/B IDs/images/start times/mounts/digests/sessions. Cleanup removes only owned labelled fixture resources; uncertain cleanup retains private temp state and exits nonzero. No required skip counts as success.
+Exclusive-mode preflight binds socket/ID/root, checks no existing containers/volumes/foreign networks, and verifies cached bases.
 
-Human UAT remains separate: use two independently admitted existing worktrees and disposable synthetic data; execute TS-1–TS-14 in the approved plan. Verify production's fixed port statically, never probe live 3080/3081 during automated tests. Do not claim AC-14/all-seven success until the isolated Docker run, independent review, and actual UAT owners supply their own evidence.
+**Separately approved development-daemon mode:** when the operator explicitly authorizes shared development Docker, set `MS_ISOLATION_MODE=shared-development` alongside an explicit canonical Unix socket (for example `unix:///run/docker.sock`) and the independently checked daemon ID/root. This is an intentional test-prerequisite variation, not an automatic fallback or authorization to use production. In this mode the harness does not inventory unrelated containers/networks/volumes: all subsequent queries/mutations are restricted to new random-fixture-derived full identities, guarded labels, exact image tags and mounts. It still requires both base images cached; any missing-base pull requires separate approval and is not performed by the harness. Existing service/container/data lifecycles, reserved ports and global cleanup remain off limits.
+
+The harness copies code into two equal-basename synthetic source roots (no Git checkout lifecycle), starts protected synthetic source P plus A/B on nonreserved ephemeral ports, verifies real TLS using each CA, edits/migrates/selects copies and performs **five A rebuild/down/up cycles**, comparing P/B IDs/images/start times/mounts/digests/sessions. Cleanup removes only owned labelled fixture resources; uncertain cleanup retains private temp state and exits nonzero. No required skip counts as success.
+
+Human UAT remains separate: use two independently admitted existing worktrees and disposable synthetic data; execute TS-1–TS-14 in the approved plan. Verify production's fixed port statically, never probe live 3080/3081 during automated tests. A passing seven-command developer run is automated evidence only. AC-14/human UAT, independent review and release readiness still require their respective owners' evidence.

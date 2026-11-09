@@ -1,4 +1,4 @@
-// Synthetic-only integration proof. Never falls back to the host/default Docker daemon.
+// Synthetic-only proof. Shared development Docker requires explicit operator-selected mode and pinned identity.
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
@@ -6,29 +6,36 @@ import os from 'node:os';
 import net from 'node:net';
 import https from 'node:https';
 import { fileURLToPath } from 'node:url';
-import { identityFor, checkout, privateDir, privateTree, exclusiveFile, readPrivate, digest, availablePort } from './stack-identity.mjs';
+import { identityFor, checkout, privateDir, privateTree, pathGuard, exclusiveFile, readPrivate, digest, availablePort } from './stack-identity.mjs';
 import { cloneDataset, selectDataset, inspectDataset } from './stack-data.mjs';
 import { docker, dockerEnvironment, inventory, lifecycle, selectedData } from './local-stack.mjs';
 import { blankPlan, convertLegacy } from '../public/model.js';
 import { blankPlan as legacyBlank } from '../public/legacy-model.js';
 
 export async function isolationPreflight(env = process.env, run = docker) {
+  const mode = env.MS_ISOLATION_MODE || 'exclusive';
+  if (!['exclusive', 'shared-development'].includes(mode)) throw new Error('Unknown isolation mode');
+  const shared = mode === 'shared-development';
   const host = env.MS_ISOLATION_DOCKER_HOST, expectedId = env.MS_ISOLATION_DAEMON_ID, root = env.MS_ISOLATION_DOCKER_ROOT;
-  if (!host?.startsWith('unix:///') || !expectedId || !root || ['/var/run/docker.sock', '/run/docker.sock'].includes(host.slice(7))) throw new Error('Isolated Docker gate missing: supply explicit private unix socket, expected daemon ID and private Docker root; default daemon is forbidden');
+  if (!host?.startsWith('unix:///') || !expectedId || !root || (!shared && ['/var/run/docker.sock', '/run/docker.sock'].includes(host.slice(7)))) throw new Error('Isolated Docker gate missing: supply explicit private unix socket, expected daemon ID and private Docker root; default daemon is forbidden');
   const socket = host.slice(7);
-  await privateDir(path.dirname(socket)); await privateDir(root);
+  if (shared) await pathGuard(path.dirname(socket));
+  else { await privateDir(path.dirname(socket)); await privateDir(root); }
   const s = await fs.lstat(socket);
-  if (!s.isSocket() || s.uid !== process.getuid()) throw new Error('Isolated socket ownership refused');
+  if (!s.isSocket() || !(shared ? [0, process.getuid()].includes(s.uid) && !(s.mode & 0o002) : s.uid === process.getuid())) throw new Error('Isolated socket ownership refused');
   const dockerEnv = { PATH: env.PATH, HOME: env.HOME, DOCKER_HOST: host, COMPOSE_DISABLE_ENV_FILE: '1' };
   const call = args => run(args, { env: dockerEnv });
   const info = JSON.parse(call(['info', '--format', '{{json .}}']));
   if (info.ID !== expectedId || info.DockerRootDir !== root) throw new Error('Isolated daemon identity/root mismatch');
-  if (call(['ps', '-aq']) || call(['volume', 'ls', '-q'])) throw new Error('Isolated daemon must have no containers or volumes');
-  const networks = call(['network', 'ls', '--format', '{{.Name}}']).split(/\s+/).filter(Boolean);
-  if (networks.some(n => !['bridge', 'host', 'none'].includes(n))) throw new Error('Isolated daemon has foreign networks');
+  if (info.SecurityOptions?.some(option => option.includes('rootless'))) throw new Error('Rootless UID mapping does not satisfy the host/container UID1000 bind contract');
+  if (!shared) {
+    if (call(['ps', '-aq']) || call(['volume', 'ls', '-q'])) throw new Error('Isolated daemon must have no containers or volumes');
+    const networks = call(['network', 'ls', '--format', '{{.Name}}']).split(/\s+/).filter(Boolean);
+    if (networks.some(n => !['bridge', 'host', 'none'].includes(n))) throw new Error('Isolated daemon has foreign networks');
+  } // Shared mode never inventories unrelated containers, networks, volumes or data.
   for (const image of ['node:22.23.0-alpine', 'caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d']) call(['image', 'inspect', image]);
   call(['compose', 'version']);
-  return { host, dockerEnv };
+  return { host, dockerEnv, mode };
 }
 async function freePort(used) {
   for (let i = 0; i < 20; i++) {
@@ -147,7 +154,7 @@ export async function main(argv = process.argv.slice(2)) {
     const working = path.join(await selectedData(a), 'plan.json'), bytes = await fs.readFile(working); await fs.unlink(working);
     await assert.rejects(lifecycle(a, 'up')); await exclusiveFile(working, bytes);
     assert.deepEqual(await fingerprint(p), protectedBefore); assert.deepEqual(await fingerprint(b), peerBefore);
-    console.log('PASS synthetic Docker isolation: protected source + two worktree identities, five rebuild/restart cycles, TLS/auth/session isolation, copy-only migration, NEW-only clone, stopped-only selection and missing-data refusal. Human UAT not run.');
+    console.log(`PASS synthetic Docker isolation (${gate.mode}): protected source + two worktree identities, five rebuild/restart cycles, TLS/auth/session isolation, copy-only migration, NEW-only clone, stopped-only selection and missing-data refusal. Human UAT not run.`);
   } finally {
     // Only validated, labelled fixture resources; never prune or global down. Keep state if ownership/stop is uncertain.
     for (let instance of instances.reverse()) {
