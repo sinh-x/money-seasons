@@ -12,6 +12,12 @@
     "dev": "node --watch server.mjs",
     "test": "node --test",
     "test:browser": "node scripts/browser-check.mjs",
+    "production:config": "node scripts/production-stack.mjs config",
+    "production:build": "node scripts/production-stack.mjs build",
+    "production:up": "node scripts/production-stack.mjs up",
+    "production:down": "node scripts/production-stack.mjs down",
+    "production:status": "node scripts/production-stack.mjs status",
+    "production:verify": "node scripts/production-stack.mjs verify",
     "local:init": "node scripts/local-stack.mjs init",
     "local:clone": "node scripts/local-stack.mjs clone",
     "local:select": "node scripts/local-stack.mjs select",
@@ -20,7 +26,7 @@
     "local:up": "node scripts/local-stack.mjs up",
     "local:down": "node scripts/local-stack.mjs down",
     "local:status": "node scripts/local-stack.mjs ps",
-    "check": "node --check server.mjs && node --check persistence.mjs && node --check auth.mjs && node --check scripts/local-stack.mjs && node --check scripts/stack-identity.mjs && node --check scripts/stack-data.mjs && node --check scripts/stack-isolation-check.mjs && node --check scripts/stack-browser-checks.mjs && node --check scripts/browser-check.mjs && node --check scripts/browser-server.mjs && node --check scripts/fixture-support.mjs && node --check public/app.js && node --check public/model.js && node --check public/legacy-model.js && node --check public/amount-input.js && node --check public/expense-tags.js"
+    "check": "node --check server.mjs && node --check persistence.mjs && node --check auth.mjs && node --check scripts/local-stack.mjs && node --check scripts/production-stack.mjs && node --check scripts/stack-identity.mjs && node --check scripts/stack-data.mjs && node --check scripts/stack-isolation-check.mjs && node --check scripts/stack-browser-checks.mjs && node --check scripts/browser-check.mjs && node --check scripts/browser-server.mjs && node --check scripts/fixture-support.mjs && node --check public/app.js && node --check public/model.js && node --check public/legacy-model.js && node --check public/amount-input.js && node --check public/expense-tags.js"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.11.1",
