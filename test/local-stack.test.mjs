@@ -4,15 +4,17 @@ import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { loadInstance } from '../scripts/stack-identity.mjs';
+import { loadInstance, exclusiveFile } from '../scripts/stack-identity.mjs';
+import { cloneDataset, selectDataset, inspectDataset } from '../scripts/stack-data.mjs';
+import { blankPlan } from '../public/model.js';
 import { dockerEnvironment, composeArgs, prepareRuntime, verifyContainer, inventory, lifecycle, expectedMounts } from '../scripts/local-stack.mjs';
 
 const instance = { id: 'a'.repeat(64), project: `ms-dev-${'a'.repeat(24)}`, port: 43003, base: '/private/a', worktree: '/checkout/a', cookieName: `ms_dev_${'a'.repeat(64)}` };
-function container(service = 'web') {
-  return { Id: 'owned', Config: { Image: `${instance.project}-${service}:dev`, Labels: { 'org.money-seasons.instance': instance.id, 'com.docker.compose.project': instance.project, 'com.docker.compose.service': service } },
-    Mounts: expectedMounts(instance, '/private/a/data', service).map(([Destination, Source, RW]) => ({ Type: 'bind', Destination, Source, RW })),
-    HostConfig: { PortBindings: service === 'web' ? {} : { '43003/tcp': [{ HostIp: '127.0.0.1', HostPort: '43003' }] } },
-    NetworkSettings: { Networks: Object.fromEntries(['backend', ...(service === 'caddy' ? ['edge'] : [])].map(n => [`${instance.project}_${n}`, {}])) }, State: { Running: false, Status: 'exited' } };
+function container(service = 'web', owner = instance, data = '/private/a/data') {
+  return { Id: `owned-${service}`, Config: { Image: `${owner.project}-${service}:dev`, Labels: { 'org.money-seasons.instance': owner.id, 'com.docker.compose.project': owner.project, 'com.docker.compose.service': service } },
+    Mounts: expectedMounts(owner, data, service).map(([Destination, Source, RW]) => ({ Type: 'bind', Destination, Source, RW })),
+    HostConfig: { PortBindings: service === 'web' ? {} : { [`${owner.port}/tcp`]: [{ HostIp: '127.0.0.1', HostPort: String(owner.port) }] } },
+    NetworkSettings: { Networks: Object.fromEntries(['backend', ...(service === 'caddy' ? ['edge'] : [])].map(n => [`${owner.project}_${n}`, {}])) }, State: { Running: false, Status: 'exited' } };
 }
 test('worktree Compose retains loopback, internal app and hardening with required namespaces', async () => {
   const source = await fs.readFile('compose.local.yaml', 'utf8');
@@ -60,7 +62,44 @@ test('inventory refuses unowned Docker images/networks and unknown daemon errors
   };
   await assert.rejects(inventory(instance, '/private/a/data', run), /image tag collision/);
   await assert.rejects(inventory(instance, '/private/a/data', args => args[0] === 'network' && args.includes('--format') ? 'collision' : ''), /network name collision/);
+  await assert.rejects(inventory(instance, '/private/a/data', args => {
+    if (args[0] === 'network' && args[1] === 'ls') return 'owned-network';
+    if (args[0] === 'network' && args[1] === 'inspect') return JSON.stringify([{ Name: `${instance.project}_backend`, Internal: true, Labels: { 'org.money-seasons.instance': instance.id }, Containers: { foreign: {} } }]);
+    return '';
+  }), /Foreign network attachment/);
 });
+test('lifecycle command model scopes five rebuild/down/up cycles; foreign mounts prevent all effects', async t => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'ms-lifecycle-')); t.after(() => fs.rm(home, { recursive: true, force: true }));
+  let a = await loadInstance({ home, port: 43006, create: true });
+  const source = path.join(home, 'source'); await fs.mkdir(source, { mode: 0o700 });
+  const planFile = path.join(source, 'plan.json'); await exclusiveFile(planFile, JSON.stringify({ schemaVersion: 'money-seasons-store/v1', revision: 1, plan: blankPlan() }));
+  const sourceConfig = path.join(home, 'source.json'); await exclusiveFile(sourceConfig, JSON.stringify({ planFile }));
+  await cloneDataset(a, { sourceConfig, id: 'trial' }); await selectDataset(a, 'trial', { proveStopped: async () => true });
+  a = await loadInstance({ home }); const data = (await inspectDataset(a, 'trial')).data;
+  let state = [], calls = [];
+  const run = (args, options) => {
+    calls.push(args);
+    assert.equal(options.env.MS_DEV_PROJECT, a.project); assert.equal(options.env.MS_DEV_DATA, data);
+    if (args[0] === 'ps') {
+      if (args.includes(`label=com.docker.compose.project=${a.project}`)) return state.map(c => c.Id).join('\n');
+      return state.filter(c => args.includes(`name=^/${a.project}-${c.Config.Labels['com.docker.compose.service']}-1$`)).map(c => c.Id).join('\n');
+    }
+    if (args[0] === 'inspect') return JSON.stringify(state);
+    if (args[0] === 'compose') {
+      assert.ok(args.includes(a.project)); assert.ok(args.includes('/dev/null'));
+      if (args.includes('up')) state = ['web', 'caddy'].map(s => ({ ...container(s, a, data), State: { Running: true, Status: 'running', Health: { Status: 'healthy' } } }));
+      if (args.includes('down')) state = [];
+    }
+    return '';
+  };
+  for (let i = 0; i < 5; i++) { await lifecycle(a, 'up', { run }); await lifecycle(a, 'down', { run }); }
+  assert.equal(calls.filter(c => c[0] === 'compose' && c.includes('up')).length, 5);
+  const passphrase = await fs.readFile(path.join(a.base, 'passphrase'));
+  state = [container('web', a, data)]; state[0].Mounts[0].Source = '/foreign'; calls = [];
+  await assert.rejects(lifecycle(a, 'up', { run }), /mounts/);
+  assert.equal(calls.some(c => c[0] === 'compose'), false); assert.deepEqual(await fs.readFile(path.join(a.base, 'passphrase')), passphrase);
+});
+
 test('missing selected data and invalid CLI options fail before Docker or bootstrap', async t => {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'ms-command-')); t.after(() => fs.rm(home, { recursive: true, force: true }));
   const a = await loadInstance({ home, port: 43003, create: true }); let called = false;

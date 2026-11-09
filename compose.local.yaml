@@ -4,6 +4,7 @@ services:
   web:
     build:
       context: .
+      network: none
       labels:
         org.money-seasons.instance: ${MS_DEV_ID:?}
     image: ${MS_DEV_PROJECT:?}-web:dev
@@ -43,11 +44,13 @@ services:
     build:
       context: ./ops
       dockerfile: Dockerfile.caddy-local
+      network: none
       labels:
         org.money-seasons.instance: ${MS_DEV_ID:?}
     image: ${MS_DEV_PROJECT:?}-caddy:dev
     pull_policy: never
     user: "1000:1000"
+    command: [sh, -c, "umask 077; exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile"]
     environment:
       GOMAXPROCS: "2"
       MS_DEV_PORT: ${MS_DEV_PORT:?}

@@ -64,6 +64,20 @@ test('legacy conversion preserves source and exact original, only working copy m
   assert.deepEqual(await fs.readFile(path.join(d.directory, 'original.json')), raw);
   assert.equal((await inspectDataset(f.instance, 'legacy')).metadata.planVersion, 2);
 });
+test('v1 copy validates and requires original-preserving acknowledged conversion', async t => {
+  const old = { version: 1, currency: 'VND', year: 2027, name: 'Synthetic v1', openingCash: 100, demo: false,
+    items: [{ id: 'old', name: 'Synthetic', type: 'expense', status: 'confirmed', repeat: 'monthly', start: 1, end: 12, amount: 10, category: 'Synthetic', actuals: { 11: 12, 12: 0 } }] };
+  const raw = envelope(old, 2), f = await fixture(t, raw); await f.clone('v1'); const d = await inspectDataset(f.instance, 'v1');
+  const store = await openStore(d.data);
+  try {
+    const converted = convertLegacy(old, { confirmed: true });
+    await assert.rejects(store.save(converted, 2));
+    await store.save(converted, 2, { migrationConfirmed: true });
+    assert.equal((await store.read()).revision, 3);
+  } finally { await store.close(); }
+  assert.deepEqual(await fs.readFile(f.planFile), raw); assert.deepEqual(await fs.readFile(path.join(d.directory, 'original.json')), raw);
+});
+
 test('corrupt/newer/oversize/invalid UTF-8 sources refuse before dataset publication', async t => {
   const f = await fixture(t);
   for (const raw of [Buffer.from('{bad'), envelope({ version: 99 }), Buffer.alloc(ENVELOPE_LIMIT + 1), Buffer.from([0xff])]) {

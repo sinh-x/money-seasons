@@ -10,7 +10,8 @@ import { fileURLToPath } from 'node:url';
 
 export const checkout = fileURLToPath(new URL('../', import.meta.url));
 export const inside = (child, parent) => child === parent || child.startsWith(parent + path.sep);
-export const fail = code => { throw new Error(code); };
+export class GuardError extends Error {}
+export const fail = code => { throw new GuardError(code); };
 export const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 export function devPort(value) {
   if (!/^\d+$/.test(String(value))) fail('Explicit integer development port required');
@@ -94,7 +95,8 @@ export async function worktreeIdentity(root = checkout) {
   if (worktree !== path.resolve(root)) fail('Exact physical worktree root required');
   const repository = await fs.realpath(path.resolve(root, git('rev-parse', '--git-common-dir')));
   const s = await fs.stat(worktree);
-  return identityFor({ repository, worktree, device: String(s.dev), inode: String(s.ino) });
+  const registration = await fs.realpath(git('rev-parse', '--absolute-git-dir'));
+  return identityFor({ repository, worktree, registration, device: String(s.dev), inode: String(s.ino) });
 }
 export function identityFor(binding) {
   const id = digest(JSON.stringify([binding.repository, binding.worktree]));
@@ -113,7 +115,9 @@ export async function loadInstance({ root = checkout, home = os.homedir(), port,
   finally { await fs.unlink(registryLock); await syncDir(parent); }
   async function load() {
   const base = path.join(parent, identity.id);
-  if (create) await privateDir(base, true); else await privateDir(base);
+  let exists = false;
+  try { await privateDir(base); exists = true; }
+  catch (e) { if (e.code !== 'ENOENT' || !create) throw e; }
   const manifest = path.join(base, 'instance.json');
   let existing;
   try {
@@ -123,23 +127,25 @@ export async function loadInstance({ root = checkout, home = os.homedir(), port,
     if (state.selected !== null && (typeof state.selected !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(state.selected))) fail('Invalid selected dataset');
     existing = state;
   } catch (e) {
-    if (e.code !== 'ENOENT' || !create) throw e;
+    if (e.code !== 'ENOENT' || !create || exists) throw e;
   }
   const selectedPort = existing ? existing.port : devPort(port);
   // Full identity and port collision check, including a truncated Docker prefix collision.
   for (const entry of await fs.readdir(parent)) {
     if (entry === identity.id || entry === 'registry.lock') continue;
     const peer = JSON.parse((await readPrivate(path.join(parent, entry, 'instance.json'))).toString('utf8'));
-    if (peer.project === identity.project || peer.id === identity.id || peer.port === selectedPort) fail('Existing instance identity/port collision');
+    if (peer.id !== entry || peer.version !== 1 || identityFor(peer).id !== peer.id || peer.project !== `ms-dev-${peer.id.slice(0, 24)}` || devPort(peer.port) !== peer.port) fail('Unknown/corrupt peer registration refused');
+    if (peer.registration === identity.registration || peer.project === identity.project || peer.id === identity.id || peer.port === selectedPort) fail('Existing/relocated instance identity or port collision');
   }
   if (existing) return { ...existing, base, manifest };
   const state = { version: 1, ...identity, port: selectedPort, selected: null };
+  await fs.mkdir(base, { mode: 0o700 }); // Claim only after all collision checks; never poison peer registry on refusal.
   await exclusiveFile(manifest, JSON.stringify(state) + '\n'); await syncDir(base); await syncDir(parent);
   return { ...state, base, manifest };
   }
 }
 export async function availablePort(port) {
   const server = net.createServer();
-  await new Promise((resolve, reject) => { server.once('error', () => reject(new Error('Development port unavailable; owner left unchanged'))); server.listen(devPort(port), '127.0.0.1', resolve); });
+  await new Promise((resolve, reject) => { server.once('error', () => reject(new GuardError('Development port unavailable; owner left unchanged'))); server.listen(devPort(port), '127.0.0.1', resolve); });
   await new Promise(resolve => server.close(resolve));
 }

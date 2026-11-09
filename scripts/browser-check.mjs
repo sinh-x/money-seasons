@@ -12,6 +12,7 @@ import { blankPlan, demoPlan, forecast, validatePlan } from '../public/model.js'
 import { demoPlan as legacyDemo } from '../public/legacy-model.js';
 import { debtFixture } from './debt-fixture.mjs';
 import { expenseBrowserChecks } from './expense-browser-checks.mjs';
+import { stackBrowserChecks } from './stack-browser-checks.mjs';
 if (process.env.BASE_URL) throw new Error('Refusing BASE_URL: browser checks own an isolated synthetic child server.');
 const artifacts = process.env.BROWSER_ARTIFACTS || await mkdtemp(path.join(os.tmpdir(), 'ms-001-browser-'));
 if (!path.resolve(artifacts).startsWith(os.tmpdir() + path.sep)) throw new Error('Artifacts must be outside Git in a temporary directory.');
@@ -86,6 +87,7 @@ async function put(p, plan) {
 try {
   [{ base }] = await once(child, 'message'); assert.match(base, /^http:\/\/127\.0\.0\.1:\d+$/); assert.ok(!['3080', '3081'].includes(new URL(base).port));
   browser = await chromium.launch({ executablePath: process.env.BROWSER_PATH || undefined, headless: true });
+  await check('two localhost-port worktree cookie jars coexist and peer logout is isolated', () => stackBrowserChecks(browser));
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, acceptDownloads: true });
   page = await context.newPage(); watch(page);
   await check('private login, five widths, no implicit sample or save', async () => {

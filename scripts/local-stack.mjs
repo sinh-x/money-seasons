@@ -5,7 +5,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { checkout, loadInstance, privateDir, readPrivate, exclusiveFile, syncDir, withInstanceLock, availablePort, fail } from './stack-identity.mjs';
+import { checkout, loadInstance, privateDir, readPrivate, exclusiveFile, syncDir, withInstanceLock, availablePort, fail, GuardError } from './stack-identity.mjs';
 import { cloneDataset, selectDataset, inspectDataset, writerSettled } from './stack-data.mjs';
 
 const LABEL = 'org.money-seasons.instance';
@@ -56,6 +56,7 @@ export async function inventory(instance, data, run = args => docker(args, { env
   const networkIds = run(['network', 'ls', '-q', '--filter', `label=com.docker.compose.project=${instance.project}`]).split(/\s+/).filter(Boolean);
   if (networkIds.length) for (const n of JSON.parse(run(['network', 'inspect', ...networkIds]))) {
     if (n.Labels?.[LABEL] !== instance.id || !['backend', 'edge'].some(role => n.Name === `${instance.project}_${role}` && n.Internal === (role === 'backend'))) fail('Foreign/unexpected network refused');
+    if (Object.keys(n.Containers || {}).some(id => !ids.some(owned => id.startsWith(owned)))) fail('Foreign network attachment refused');
   }
   // Also inspect exact names: an unlabelled collision must not be auto-adopted by Compose.
   for (const role of ['backend', 'edge']) {
@@ -151,5 +152,8 @@ export async function main(argv) {
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try { await main(process.argv.slice(2)); }
-  catch { console.error('Development command refused/failed. Check explicit options, private ownership, complete dataset, stopped writer and scoped Docker availability. No data/secrets logged; no automatic repair.'); process.exitCode = 1; }
+  catch (e) {
+    console.error(e instanceof GuardError ? e.message : 'Development command refused: private file/dataset/manifest unavailable or unsafe. No data/secrets logged; no automatic repair.');
+    process.exitCode = 1;
+  }
 }
