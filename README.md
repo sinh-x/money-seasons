@@ -63,19 +63,24 @@ Bare numbers mean thousands. One/two decimal digits are accepted; consistent thr
 - The **full refresh-month plan** applies: opening + income − expense. Today's balance may already reflect spending; this approximate scenario is not reconciliation or a promise of daily affordability. December snapshots never affect November. Missing data propagates until a complete reset and complete plans resolve it.
 - Debt snapshots alone never change cash; liabilities/receivables are not netted into available money. No automatic settlement, interest or amortization.
 
-## Local Docker + Caddy test stack
+## Isolated worktree Docker + Caddy environments (MS-006)
+
+Follow the [worktree isolation guide](docs/worktree-isolation.md) to initialize an explicit development port, clone a **NEW** private dataset and select it while stopped:
 
 ```sh
+npm run local:init -- --port 3082
+npm run local:clone -- --source-config "$MS_SOURCE_CONFIG" --dataset trial-001
+npm run local:select -- --dataset trial-001
 npm run local:up
+npm run local:status
+npm run local:down
 ```
 
-Open **https://localhost:3081**. This separate loopback-only stack uses private synthetic-test storage and leaves the old port-3080 app alone. **Running this command rebuilds/deploys the current source.** Following Sinh's separate update request, the local stack now serves v0.3.0 with both services healthy; see [update evidence](docs/local-stack.md#current-v3-update-2026-11-03-explicitly-requested). Existing storage/passphrase were retained and no plan migration was performed. Export any legacy original before explicitly converting it.
-
-The generated local-only passphrase lives at `~/.local/share/money-seasons-local-test/passphrase`; open it privately in your editor, never print/paste it into logs/tickets. Caddy uses a local CA, with no automatic host-trust changes. See [local stack guide](docs/local-stack.md). Do not import household data into the test stack.
+**Up rebuilds/deploys only this worktree.** No automatic source read, empty/demo seed, refresh or dataset deletion. Production is reserved to **127.0.0.1:3080**; legacy singleton **3081** and its storage remain untouched and are never adopted. Each physical checkout has independent images/networks/data/credentials/CA/cookies. The guide includes a synthetic two-worktree example; real private copies require separate operator authorization. Never put financial data or secrets in Git/logs/tickets. [Old local-stack evidence](docs/local-stack.md) is historical, not qualification of MS-006.
 
 ## Operator setup (separate authorization)
 
-Node 22+ on Linux or Docker Compose; no runtime npm dependencies. Qualify with synthetic data first.
+Node 22+ on Linux or Docker Compose; no runtime npm dependencies. Qualify with synthetic data first. Production Compose fixes its backend to `127.0.0.1:3080`; `MONEY_SEASONS_PORT` no longer overrides it. No production restart or gateway change is part of MS-006.
 
 1. Privately provision a 12+ character passphrase in a regular, non-symlinked file **outside Git/public assets**, mode **0600**. Do not put the secret in a command argument or shell history. The app keeps a salted scrypt verifier in memory; the file is not encrypted by the app.
 2. Provision a dedicated data directory **outside any Git checkout**, mode **0700**, owned by the app UID, with no symlinked parents. Use a local filesystem supporting atomic same-directory rename and file/directory fsync, never a network share or multiple writers.

@@ -7,7 +7,8 @@ import { createAuth } from '../auth.mjs';
 import { createServer } from '../server.mjs';
 
 export const PASSPHRASE = 'synthetic-family-test-only';
-export async function testApp({ hook, now } = {}) {
+export async function testApp({ hook, now, cookieName, hostname = '127.0.0.1' } = {}) {
+  if (!['127.0.0.1', 'localhost'].includes(hostname)) throw new Error('Loopback fixture hostname required');
   const directory = await mkdtemp(path.join(os.tmpdir(), 'money-seasons-test-'));
   let store, server;
   try {
@@ -16,8 +17,9 @@ export async function testApp({ hook, now } = {}) {
     const auth = Object.fromEntries(['boundary', 'session', 'login', 'logout'].map(key => [key, (...args) => implementation[key](...args)]));
     server = createServer({ store, auth });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-    const base = `http://127.0.0.1:${server.address().port}`;
-    implementation = await createAuth({ passphrase: PASSPHRASE, origins: [base], secure: false, now });
+    const base = `http://${hostname}:${server.address().port}`;
+    if (['3080', '3081'].includes(String(server.address().port))) throw new Error('Reserved fixture port refused');
+    implementation = await createAuth({ passphrase: PASSPHRASE, origins: [base], secure: false, now, cookieName });
     return { base, directory, store, server,
       async login() {
         const r = await fetch(`${base}/api/login`, { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json' }, body: JSON.stringify({ passphrase: PASSPHRASE }) });

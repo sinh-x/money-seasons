@@ -26,6 +26,20 @@ test('secure 256-bit sessions; CSRF, expiry, logout and restart invalidation', a
   assert.throws(() => auth.session(req), e => e.status === 401);
 });
 
+test('development cookies coexist across localhost ports and logout is instance scoped', async () => {
+  const names = ['a', 'b'].map(c => `ms_dev_${c.repeat(64)}`);
+  const origins = ['https://localhost:43001', 'https://localhost:43002'];
+  const auths = await Promise.all(names.map((cookieName, i) => createAuth({ passphrase: secret, origins: [origins[i]], cookieName })));
+  const req = (i, cookie, csrf) => ({ headers: { host: new URL(origins[i]).host, origin: origins[i], cookie, 'x-csrf-token': csrf }, socket: { remoteAddress: '127.0.0.1' } });
+  const logins = await Promise.all(auths.map((a, i) => a.login(req(i), secret)));
+  const jar = logins.map(l => l.cookie.split(';')[0]).join('; ');
+  for (let i = 0; i < 2; i++) assert.equal(auths[i].session(req(i, jar)).csrf, logins[i].csrf);
+  assert.match(auths[1].logout(req(1, jar, logins[1].csrf)), new RegExp(`^${names[1]}=;`));
+  assert.equal(auths[0].session(req(0, jar)).csrf, logins[0].csrf);
+  assert.throws(() => auths[0].session(req(0, jar + '; ' + logins[0].cookie.split(';')[0])));
+  await assert.rejects(createAuth({ passphrase: secret, origins: [origin], cookieName: 'bad; cookie' }));
+});
+
 test('five client failures per 15m, global thirty; forwarded identities ignored', async () => {
   let time = 0;
   const auth = await createAuth({ passphrase: secret, origins: [origin], now: () => time });

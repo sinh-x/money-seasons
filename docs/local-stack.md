@@ -1,4 +1,6 @@
-# Local Docker + Caddy test stack
+# Local Docker + Caddy test stack — historical singleton
+
+> **MS-006 supersedes the commands and synthetic-only setup boundary below.** Use the [worktree isolation guide](worktree-isolation.md) for current code. `local:*` now targets only the registered physical worktree, never `money-seasons-local-test` / 3081. Existing singleton data, credentials, certificates and services are neither adopted nor changed. Old paths/commands/results below describe earlier separately authorized deployments, not current instructions or fresh qualification. Private real-data trials are permitted only through explicit separately authorized NEW copies; never import real data into the legacy singleton.
 
 This **separate local/synthetic stack** uses the current feature checkout, not the old foundation image on port 3080. It does not expose family/Tailscale/LAN access or change host trust/firewall/Tailscale settings. Use synthetic data only; do not import the household plan here.
 

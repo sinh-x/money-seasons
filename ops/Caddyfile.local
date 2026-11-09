@@ -7,7 +7,7 @@
 	}
 }
 
-https://localhost:3081 {
+https://localhost:{$MS_DEV_PORT} {
 	tls internal
 	reverse_proxy web:3080
 }

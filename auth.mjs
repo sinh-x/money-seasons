@@ -16,7 +16,9 @@ export async function readPassphrase(filename) {
     return (await file.readFile('utf8')).replace(/\r?\n$/, '');
   } finally { await file.close(); }
 }
-export async function createAuth({ passphrase, origins, secure = true, now = Date.now }) {
+export async function createAuth({ passphrase, origins, secure = true, now = Date.now, cookieName = 'ms_session' }) {
+  if (cookieName !== 'ms_session' && !/^ms_dev_[a-f0-9]{64}$/.test(cookieName)) throw new Error('Invalid instance cookie namespace');
+  const cookiePrefix = `${cookieName}=`;
   if (typeof passphrase !== 'string' || passphrase.length < 12 || Buffer.byteLength(passphrase) > 1024) throw new Error('Passphrase must be 12–1024 bytes');
   if (!Array.isArray(origins) || !origins.length) throw new Error('Explicit allowed origins required');
   const allowed = new Set(origins.map(value => {
@@ -43,16 +45,16 @@ export async function createAuth({ passphrase, origins, secure = true, now = Dat
   }
   function session(req, mutation = false) {
     boundary(req, mutation); prune();
-    const cookies = String(req.headers.cookie || '').split(';').map(x => x.trim()).filter(x => x.startsWith('ms_session='));
+    const cookies = String(req.headers.cookie || '').split(';').map(x => x.trim()).filter(x => x.startsWith(cookiePrefix));
     if (cookies.length !== 1) throw new AuthError('login-required', 401);
-    const token = cookies[0].slice('ms_session='.length);
+    const token = cookies[0].slice(cookiePrefix.length);
     if (!/^[a-f0-9]{64}$/.test(token)) throw new AuthError('login-required', 401);
     const entry = sessions.get(tokenHash(token));
     if (!entry) throw new AuthError('login-required', 401);
     if (mutation && req.headers['x-csrf-token'] !== entry.csrf) throw new AuthError('csrf-denied', 403);
     return entry;
   }
-  const cookie = (token, age = LIFETIME / 1000) => `ms_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${secure ? '; Secure' : ''}`;
+  const cookie = (token, age = LIFETIME / 1000) => `${cookieName}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${secure ? '; Secure' : ''}`;
   return {
     boundary, session,
     async login(req, input) {
@@ -72,7 +74,7 @@ export async function createAuth({ passphrase, origins, secure = true, now = Dat
     },
     logout(req) {
       session(req, true);
-      const token = String(req.headers.cookie).split(';').map(x => x.trim()).find(x => x.startsWith('ms_session=')).slice(11);
+      const token = String(req.headers.cookie).split(';').map(x => x.trim()).find(x => x.startsWith(cookiePrefix)).slice(cookiePrefix.length);
       sessions.delete(tokenHash(token));
       return cookie('', 0);
     }
