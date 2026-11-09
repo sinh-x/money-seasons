@@ -25,6 +25,7 @@ test('worktree Compose retains loopback, internal app and hardening with require
   assert.match(source, /networks: \[edge, backend\]/); assert.doesNotMatch(source.split('  caddy:')[0], /^\s+ports:/m);
   for (const expected of ['GOMAXPROCS: "2"', 'pids_limit: 64', 'user: "1000:1000"', 'cap_drop: [ALL]', 'no-new-privileges:true', 'mem_limit: 128m']) assert.ok(source.includes(expected));
   assert.equal((source.match(/read_only: true/g) || []).length, 4);
+  assert.match(source.split('  caddy:')[1], /init: true/); // Reap HTTPS-probe ssl_client orphans, keep PID64.
   assert.doesNotMatch(source, /money-seasons-local-test|3081|\$\{HOME\}|external:|privileged:/);
   const config = await fs.readFile('ops/Caddyfile.local', 'utf8');
   for (const expected of ['admin off', 'skip_install_trust', 'tls internal', 'https://localhost:{$MS_DEV_PORT}', 'reverse_proxy web:3080']) assert.ok(config.includes(expected));

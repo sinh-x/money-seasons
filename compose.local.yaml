@@ -50,6 +50,8 @@ services:
     image: ${MS_DEV_PROJECT:?}-caddy:dev
     pull_policy: never
     user: "1000:1000"
+    # Reap orphaned BusyBox wget ssl_client helpers from HTTPS health probes.
+    init: true
     command: [sh, -c, "umask 077; exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile"]
     environment:
       GOMAXPROCS: "2"
