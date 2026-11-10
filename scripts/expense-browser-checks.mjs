@@ -71,7 +71,7 @@ export async function expenseBrowserChecks({ page, context, base, watch, check, 
     assert.equal(await disclosure.getAttribute('aria-expanded'), 'false'); assert.ok(await disclosure.evaluate(e => e === document.activeElement));
     await page.locator('[data-collapse-all=open]').click();
     assert.equal(planWrites.length, writes); assert.deepEqual(await snapshot(page), before);
-    assert.deepEqual(await page.evaluate(async () => (await fetch('/api/export')).json()), before.plan);
+    assert.deepEqual(await page.evaluate(async () => (await fetch((document.documentElement.dataset.basePath || '') + '/api/export')).json()), before.plan);
   });
   await check('MS-004 exact amount switch/save wording, non-money DOM parity, hidden draft validation', async () => {
     await show(false); const hidden = await commonDOM('#workspace'); await show(true); assert.equal(await commonDOM('#workspace'), hidden);
@@ -183,7 +183,7 @@ export async function expenseBrowserChecks({ page, context, base, watch, check, 
     await importPlan(page, fixture);
   });
   await check('MS-004 tagged stale save keeps acknowledged library and exportable complete candidate', async () => {
-    const other = await context.newPage(); watch(other); await other.goto(base); await other.locator('#application').waitFor({ state: 'visible' });
+    const other = await context.newPage(); watch(other); await other.goto(base + '/'); await other.locator('#application').waitFor({ state: 'visible' });
     const newer = { ...fixture, name: 'Synthetic newer tags' }; assert.equal(await put(other, newer), 200); const acknowledged = await snapshot(other);
     await newExpense('Conflict tagged expense'); await addNewTag('Conflict key', 'Conflict value'); await page.locator('#edit-form button[type=submit]').click();
     await page.waitForFunction(() => document.querySelector('#save-status').textContent.startsWith('CHƯA LƯU')); assert.deepEqual(await snapshot(page), acknowledged); await close(page);

@@ -6,3 +6,10 @@ export function validateBasePath(value = '') {
   }
   return value;
 }
+
+const apiPaths = new Set(['/api/login', '/api/session', '/api/plan', '/api/export', '/api/logout']);
+export function apiPath(basePath, route) {
+  validateBasePath(basePath);
+  if (!apiPaths.has(route)) throw new Error('Invalid application API route');
+  return basePath + route;
+}
