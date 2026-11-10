@@ -5,6 +5,7 @@ import path from 'node:path';
 import { openStore } from './persistence.mjs';
 import { createAuth, readPassphrase } from './auth.mjs';
 import { MAX_BYTES } from './public/model.js';
+import { validateBasePath } from './public/base-path.js';
 
 const root = fileURLToPath(new URL('./public/', import.meta.url));
 const assets = new Map([
@@ -95,8 +96,9 @@ export function createServer({ store, auth } = {}) {
 }
 
 export async function startApplication(env = process.env) {
+  const basePath = validateBasePath(env.MONEY_SEASONS_BASE_PATH);
   const auth = await createAuth({ passphrase: await readPassphrase(env.MONEY_SEASONS_PASSPHRASE_FILE),
-    origins: env.MONEY_SEASONS_ORIGINS?.split(',').map(s => s.trim()), cookieName: env.MONEY_SEASONS_COOKIE_NAME });
+    origins: env.MONEY_SEASONS_ORIGINS?.split(',').map(s => s.trim()), cookieName: env.MONEY_SEASONS_COOKIE_NAME, basePath });
   const store = await openStore(env.MONEY_SEASONS_DATA_DIR);
   const server = createServer({ store, auth });
   try {

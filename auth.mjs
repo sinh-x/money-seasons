@@ -2,6 +2,7 @@ import { randomBytes, scrypt as derive, timingSafeEqual, createHash } from 'node
 import { promisify } from 'node:util';
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
+import { validateBasePath } from './public/base-path.js';
 const scrypt = promisify(derive);
 const WINDOW = 15 * 60_000, LIFETIME = 24 * 60 * 60_000;
 export class AuthError extends Error {
@@ -16,8 +17,10 @@ export async function readPassphrase(filename) {
     return (await file.readFile('utf8')).replace(/\r?\n$/, '');
   } finally { await file.close(); }
 }
-export async function createAuth({ passphrase, origins, secure = true, now = Date.now, cookieName = 'ms_session' }) {
+export async function createAuth({ passphrase, origins, secure = true, now = Date.now, cookieName = 'ms_session', basePath = '' }) {
+  validateBasePath(basePath);
   if (cookieName !== 'ms_session' && !/^ms_dev_[a-f0-9]{64}$/.test(cookieName)) throw new Error('Invalid instance cookie namespace');
+  if (basePath) cookieName = 'ms_path_' + createHash('sha256').update(cookieName + '\0' + basePath).digest('hex');
   const cookiePrefix = `${cookieName}=`;
   if (typeof passphrase !== 'string' || passphrase.length < 12 || Buffer.byteLength(passphrase) > 1024) throw new Error('Passphrase must be 12–1024 bytes');
   if (!Array.isArray(origins) || !origins.length) throw new Error('Explicit allowed origins required');
@@ -54,7 +57,7 @@ export async function createAuth({ passphrase, origins, secure = true, now = Dat
     if (mutation && req.headers['x-csrf-token'] !== entry.csrf) throw new AuthError('csrf-denied', 403);
     return entry;
   }
-  const cookie = (token, age = LIFETIME / 1000) => `${cookieName}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${age}${secure ? '; Secure' : ''}`;
+  const cookie = (token, age = LIFETIME / 1000) => `${cookieName}=${token}; Path=${basePath}/; HttpOnly; SameSite=Strict; Max-Age=${age}${secure ? '; Secure' : ''}`;
   return {
     boundary, session,
     async login(req, input) {
