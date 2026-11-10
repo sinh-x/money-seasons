@@ -28,6 +28,8 @@ services:
     command: [sh, -c, "umask 077; exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile"]
     environment:
       GOMAXPROCS: "2"
+      MONEY_SEASONS_BASE_PATH: ${MONEY_SEASONS_BASE_PATH:-}
+      MONEY_SEASONS_PROXY_PROFILE: ${MONEY_SEASONS_PROXY_PROFILE:-root-local}
     depends_on:
       web:
         condition: service_healthy
