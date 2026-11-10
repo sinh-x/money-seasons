@@ -7,8 +7,31 @@
 	}
 }
 
+(root-local) {
+	reverse_proxy 127.0.0.1:3080
+}
+
+(tailnet-local) {
+	@slashQuery {
+		path / {$MONEY_SEASONS_BASE_PATH}
+		expression `{http.request.uri.query} != ""`
+	}
+	redir @slashQuery {$MONEY_SEASONS_BASE_PATH}/?{http.request.uri.query} 308
+	@slash path / {$MONEY_SEASONS_BASE_PATH}
+	redir @slash {$MONEY_SEASONS_BASE_PATH}/ 308
+	handle /healthz {
+		reverse_proxy 127.0.0.1:3080
+	}
+	handle_path {$MONEY_SEASONS_BASE_PATH}/* {
+		reverse_proxy 127.0.0.1:3080
+	}
+	handle {
+		respond "Not found" 404
+	}
+}
+
 https://localhost:3443 {
 	bind 127.0.0.1 ::1
 	tls internal
-	reverse_proxy 127.0.0.1:3080
+	import {$MONEY_SEASONS_PROXY_PROFILE:root-local}
 }

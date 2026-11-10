@@ -5,12 +5,14 @@ import path from 'node:path';
 import { openStore } from './persistence.mjs';
 import { createAuth, readPassphrase } from './auth.mjs';
 import { MAX_BYTES } from './public/model.js';
+import { validateBasePath } from './public/base-path.js';
 
 const root = fileURLToPath(new URL('./public/', import.meta.url));
 const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/model.js', ['model.js', 'text/javascript; charset=utf-8']],
+  ['/base-path.js', ['base-path.js', 'text/javascript; charset=utf-8']],
   ['/demo-data.js', ['demo-data.js', 'text/javascript; charset=utf-8']],
   ['/legacy-model.js', ['legacy-model.js', 'text/javascript; charset=utf-8']],
   ['/amount-input.js', ['amount-input.js', 'text/javascript; charset=utf-8']],
@@ -35,7 +37,9 @@ async function body(req, limit) {
   catch { throw error('invalid-json', 400); }
 }
 
-export function createServer({ store, auth } = {}) {
+export function createServer({ store, auth, basePath = '' } = {}) {
+  validateBasePath(basePath);
+  const escapedPrefix = basePath.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const server = http.createServer({ maxHeaderSize: 16_384 }, async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
@@ -82,7 +86,8 @@ export function createServer({ store, auth } = {}) {
       if (pathname === '/healthz') { json(200, { status: 'ok', app: 'money-seasons', version: '0.3.0' }); return; }
       const asset = assets.get(pathname);
       if (!asset) { res.writeHead(404); res.end('Not found'); return; }
-      const data = await readFile(path.join(root, asset[0]));
+      const raw = await readFile(path.join(root, asset[0]));
+      const data = pathname === '/' ? raw.toString('utf8').replaceAll('{{BASE_PATH}}', escapedPrefix) : raw;
       res.writeHead(200, { 'Content-Type': asset[1] }); res.end(req.method === 'HEAD' ? undefined : data);
     } catch (e) {
       // Never serialize exception text, payloads, secrets, or filesystem paths.
@@ -95,10 +100,11 @@ export function createServer({ store, auth } = {}) {
 }
 
 export async function startApplication(env = process.env) {
+  const basePath = validateBasePath(env.MONEY_SEASONS_BASE_PATH);
   const auth = await createAuth({ passphrase: await readPassphrase(env.MONEY_SEASONS_PASSPHRASE_FILE),
-    origins: env.MONEY_SEASONS_ORIGINS?.split(',').map(s => s.trim()), cookieName: env.MONEY_SEASONS_COOKIE_NAME });
+    origins: env.MONEY_SEASONS_ORIGINS?.split(',').map(s => s.trim()), cookieName: env.MONEY_SEASONS_COOKIE_NAME, basePath });
   const store = await openStore(env.MONEY_SEASONS_DATA_DIR);
-  const server = createServer({ store, auth });
+  const server = createServer({ store, auth, basePath });
   try {
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(Number(env.PORT || 3080), env.HOST || '127.0.0.1', resolve); });
   } catch (e) { await store.close(); throw e; }

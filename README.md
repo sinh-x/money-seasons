@@ -80,7 +80,22 @@ npm run local:down
 
 ## Canonical-main production Docker workflow
 
-Use the [tracked production workflow](docs/production-local.md) for the canonical checkout on `main`: `compose.yaml` plus `compose.production-local.yaml`, private pinned configuration, backend **127.0.0.1:3080** and local HTTPS **https://localhost:3443**. Use `npm run production:config`, `production:build`, `production:up`, `production:status` and `production:verify`; development `local:*` commands never deploy production. The future `/lichtaichinh/` gateway integration remains MS-003, not implemented by this local deployment.
+Use the [tracked production workflow](docs/production-local.md) for the canonical checkout on `main`: `compose.yaml` plus `compose.production-local.yaml`, private pinned configuration, backend **127.0.0.1:3080** and local HTTPS **https://localhost:3443**. Use `npm run production:config`, `production:build`, `production:up`, `production:status` and `production:verify`; development `local:*` commands never deploy production. MS-003 now implements the application/production-profile prerequisite for `/lichtaichinh/`; source commits do not update the running service or complete gateway integration. See the [exact two profiles and retained-original cutover](docs/production-local.md#exact-profiles-and-url-contract).
+
+## Private-tailnet subpath (MS-003)
+
+The selected production profile uses exactly:
+
+```dotenv
+MONEY_SEASONS_BASE_PATH=/lichtaichinh
+MONEY_SEASONS_ORIGINS=https://drgnfly.tail10c2c6.ts.net,https://localhost:3443
+```
+
+Browser assets/modules/home/API/export/recovery stay under `/lichtaichinh/`; proxies strip once, while the backend keeps `/api/*` and `/healthz` internally. DFC-003 owns central Caddy's308 slash redirect, route/TLS/device qualification and preservation of unrelated root API traffic. The retained local fallback is `https://localhost:3443/lichtaichinh/`, with `/` and bare prefix redirecting308 and root assets/API returning404. No gateway body substitution, new443 listener, Serve/Funnel or backend LAN exposure.
+
+Unset/empty prefix keeps root deployment. General prefixes must match `^/[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*$`, at most128 ASCII bytes; unsafe input fails before store/listen. Inert HTML configuration preserves CSP/no runtime dependencies. Prefixed cookies use a prefix-and-instance hash and matching creation/deletion Path; Secure/HttpOnly/SameSite/CSRF remain. Reauthenticate after a profile change. Cookie scoping is not protection from untrusted same-origin siblings.
+
+**Existing production data is authoritative** after the separately authorized one-time3081 copy; never recopy/reset/seed/convert automatically. Release app-first with a private retained original and one writer, then DFC-003 gateway-second; keep local3443/CA/rollback resources. Main promotion, actual deployment/backup/data access, gateway actions, CI/review/device qualification and human UAT are distinct gates, not granted by these settings or tests. Follow the [operator checklist and compatible rollback](docs/production-local.md#existing-data-app-first-cutover-checklist). Independent `compose.local.yaml`/3081 behavior is unchanged.
 
 ## Operator setup (separate authorization)
 
@@ -135,7 +150,7 @@ npm test
 BROWSER_PATH="$(command -v google-chrome)" npm run test:browser
 ```
 
-Playwright/axe are pinned development dependencies. The browser runner owns an ephemeral loopback child server, private temporary store and isolated profiles; refuses `BASE_URL`; never attaches to 3080/3081 or a normal profile. Artifacts go under `/tmp/ms-001-browser.*`. Fault hooks/fixture insecure cookies are test-only and excluded from Docker. These checks are not independent exact-FeatureSHA review, security certification or the [16 human UAT scenarios](docs/uat.md).
+Playwright/axe are pinned development dependencies. The browser runner executes the same suite in root and synthetic prefix-stripping modes, owning ephemeral loopback child servers, private temporary stores and isolated profiles; refuses `BASE_URL`; never attaches to 3080/3081 or a normal profile. Artifacts go under `/tmp/ms-001-browser.*`. Fault hooks/fixture insecure cookies are test-only and excluded from Docker. These checks are not independent exact-FeatureSHA review, security certification or the [16 human UAT scenarios](docs/uat.md).
 
 ## Code / exclusions
 
