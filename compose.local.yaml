@@ -1,0 +1,104 @@
+# Standalone worktree development stack; invoke through scripts/local-stack.mjs only.
+name: ${MS_DEV_PROJECT:?Use the scoped local-stack command}
+services:
+  web:
+    build:
+      context: .
+      network: none
+      labels:
+        org.money-seasons.instance: ${MS_DEV_ID:?}
+    image: ${MS_DEV_PROJECT:?}-web:dev
+    pull_policy: never
+    environment:
+      MONEY_SEASONS_DATA_DIR: /data
+      MONEY_SEASONS_PASSPHRASE_FILE: /run/private/passphrase
+      MONEY_SEASONS_ORIGINS: https://localhost:${MS_DEV_PORT:?}
+      MONEY_SEASONS_COOKIE_NAME: ${MS_DEV_COOKIE:?}
+    volumes:
+      - type: bind
+        source: ${MS_DEV_DATA:?}
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MS_DEV_STATE:?}/passphrase
+        target: /run/private/passphrase
+        read_only: true
+        bind:
+          create_host_path: false
+    networks: [backend]
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    pids_limit: 64
+    labels:
+      org.money-seasons.instance: ${MS_DEV_ID:?}
+    logging:
+      driver: json-file
+      options: {max-size: 5m, max-file: "2"}
+  caddy:
+    build:
+      context: ./ops
+      dockerfile: Dockerfile.caddy-local
+      network: none
+      labels:
+        org.money-seasons.instance: ${MS_DEV_ID:?}
+    image: ${MS_DEV_PROJECT:?}-caddy:dev
+    pull_policy: never
+    user: "1000:1000"
+    # Reap orphaned BusyBox wget ssl_client helpers from HTTPS health probes.
+    init: true
+    command: [sh, -c, "umask 077; exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile"]
+    environment:
+      GOMAXPROCS: "2"
+      MS_DEV_PORT: ${MS_DEV_PORT:?}
+    ports:
+      - "127.0.0.1:${MS_DEV_PORT:?}:${MS_DEV_PORT:?}"
+    networks: [edge, backend]
+    depends_on:
+      web:
+        condition: service_healthy
+    volumes:
+      - type: bind
+        source: ./ops/Caddyfile.local
+        target: /etc/caddy/Caddyfile
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MS_DEV_STATE:?}/caddy
+        target: /data
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /config:rw,noexec,nosuid,size=8m,uid=1000,gid=1000,mode=0700
+      - /tmp:rw,noexec,nosuid,size=16m
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    pids_limit: 64
+    labels:
+      org.money-seasons.instance: ${MS_DEV_ID:?}
+    healthcheck:
+      test: [CMD, wget, -q, --no-check-certificate, -O, /dev/null, "https://localhost:${MS_DEV_PORT:?}/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    logging:
+      driver: json-file
+      options: {max-size: 5m, max-file: "2"}
+networks:
+  edge:
+    labels:
+      org.money-seasons.instance: ${MS_DEV_ID:?}
+  backend:
+    internal: true
+    labels:
+      org.money-seasons.instance: ${MS_DEV_ID:?}

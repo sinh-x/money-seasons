@@ -1,4 +1,6 @@
-# Local mockup · review handoff
+# Local mockup · historical foundation review handoff
+
+> **Historical, as of foundation-v0.1 (2026-10-27), not current operating instructions.** The MS-001 candidate now implements five planning workspaces, dated cash/debt balances, configurable cross-year planning and private server-side JSON/shared-passphrase access. Its local implementation does not imply production deployment or human acceptance. The browser-only/no-API/no-volume/current-URL statements below describe the old foundation only. See [current README](../README.md), [development plan](development-plan.md), and [MS-001 details](ms-001.md). Historical verification/acceptance is preserved, not reused as evidence for the new candidate.
 
 **Deployment:** PA:d-b356fa · **Date:** 2026-10-27 · **State:** accepted by Sinh as a starting foundation; detailed usage requirements and task-level acceptance remain open.
 

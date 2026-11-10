@@ -1,0 +1,72 @@
+# Overlay the canonical production compose.yaml; never merge with compose.local.yaml.
+name: money-seasons-production
+services:
+  web:
+    image: money-seasons-production-web:${MONEY_SEASONS_RELEASE:?Pin a verified main commit}
+    pull_policy: never
+    build:
+      network: none
+      labels: &production-labels
+        org.money-seasons.purpose: production
+        org.money-seasons.source: ${MONEY_SEASONS_PRODUCTION_REPO:?Use the canonical checkout}
+        org.opencontainers.image.revision: ${MONEY_SEASONS_RELEASE:?}
+    environment:
+      MONEY_SEASONS_COOKIE_NAME: ${MONEY_SEASONS_COOKIE_NAME:-ms_session}
+    labels: *production-labels
+  caddy:
+    image: money-seasons-production-caddy:${MONEY_SEASONS_RELEASE:?}
+    pull_policy: never
+    build:
+      context: ./ops
+      dockerfile: Dockerfile.caddy-local
+      network: none
+      labels: *production-labels
+    user: "1000:1000"
+    # BusyBox wget spawns ssl_client. Reap orphaned helpers instead of exhausting PID64.
+    init: true
+    network_mode: host
+    command: [sh, -c, "umask 077; exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile"]
+    environment:
+      GOMAXPROCS: "2"
+      MONEY_SEASONS_BASE_PATH: ${MONEY_SEASONS_BASE_PATH:-}
+      MONEY_SEASONS_PROXY_PROFILE: ${MONEY_SEASONS_PROXY_PROFILE:-root-local}
+    depends_on:
+      web:
+        condition: service_healthy
+    volumes:
+      - type: bind
+        source: ./ops/Caddyfile.production-local
+        target: /etc/caddy/Caddyfile
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MONEY_SEASONS_CADDY_DIR:?Set private production CA storage}
+        target: /data
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /config:rw,noexec,nosuid,size=8m,uid=1000,gid=1000,mode=0700
+      - /tmp:rw,noexec,nosuid,size=16m
+    restart: unless-stopped
+    stop_grace_period: 30s
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    pids_limit: 64
+    labels: *production-labels
+    healthcheck:
+      test: [CMD, wget, -q, --no-check-certificate, -O, /dev/null, "https://localhost:3443/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    logging:
+      driver: json-file
+      options: {max-size: 5m, max-file: "2"}
+networks:
+  default:
+    labels:
+      org.money-seasons.purpose: production
+      org.money-seasons.source: ${MONEY_SEASONS_PRODUCTION_REPO:?}
