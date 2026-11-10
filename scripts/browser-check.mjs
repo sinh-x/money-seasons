@@ -18,22 +18,22 @@ const artifacts = process.env.BROWSER_ARTIFACTS || await mkdtemp(path.join(os.tm
 if (!path.resolve(artifacts).startsWith(os.tmpdir() + path.sep)) throw new Error('Artifacts must be outside Git in a temporary directory.');
 await mkdir(artifacts, { recursive: true, mode: 0o700 });
 console.log(`Synthetic browser artifacts: ${artifacts}`);
-const child = fork(new URL('./browser-server.mjs', import.meta.url), [], { stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
+const child = fork(new URL('./browser-server.mjs', import.meta.url), process.argv.includes('--prefix') ? ['--prefix'] : [], { stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
 let browser, base, page;
 const results = [], errors = [], external = [], scans = [], responseLedger = [], failedRequests = [], planWrites = [];
 const timeout = setTimeout(() => { child.kill('SIGTERM'); process.exitCode = 1; }, 360000);
 const check = async (name, action) => { await action(); results.push(name); console.log(`PASS ${name}`); };
 function watch(p) {
   p.on('pageerror', e => errors.push(e.message));
-  p.on('response', r => { if (r.status() >= 400) responseLedger.push({ path: new URL(r.url()).pathname, status: r.status() }); });
-  p.on('requestfailed', r => failedRequests.push({ path: new URL(r.url()).pathname, error: r.failure().errorText }));
+  p.on('response', r => { if (r.status() >= 400) responseLedger.push({ path: new URL(r.url()).pathname.slice(new URL(base).pathname.replace(/\/$/, '').length), status: r.status() }); });
+  p.on('requestfailed', r => failedRequests.push({ path: new URL(r.url()).pathname.slice(new URL(base).pathname.replace(/\/$/, '').length), error: r.failure().errorText }));
   p.on('request', r => {
     if (!r.url().startsWith(base + '/') && !r.url().startsWith('blob:')) external.push(r.url());
-    if (r.method() === 'PUT' && new URL(r.url()).pathname === '/api/plan') planWrites.push(r.url());
+    if (r.method() === 'PUT' && new URL(r.url()).pathname.slice(new URL(base).pathname.replace(/\/$/, '').length) === '/api/plan') planWrites.push(r.url());
   });
 }
 const visible = (p, selector) => p.locator(selector).waitFor({ state: 'visible' });
-const snapshot = p => p.evaluate(async () => (await fetch('/api/plan')).json());
+const snapshot = p => p.evaluate(async () => (await fetch((document.documentElement.dataset.basePath || '') + '/api/plan')).json());
 const close = async p => { await p.locator('#editor [data-close]').first().click(); await p.locator('#editor').waitFor({ state: 'hidden' }); };
 const confirm = async p => { await visible(p, '#confirm-dialog'); await p.locator('#confirm-form button[type=submit]').click(); };
 const cancelConfirm = async p => { await p.locator('#confirm-dialog [data-close]').first().click(); };
@@ -46,7 +46,7 @@ async function submit(p, needsConfirm = false) {
 }
 const nav = async (p, name) => p.locator(`[data-view="${name}"]`).click();
 async function login(p) {
-  await p.goto(base); await visible(p, '#login-form'); await p.locator('[name=passphrase]').fill(PASSPHRASE);
+  await p.goto(base + '/'); await visible(p, '#login-form'); await p.locator('[name=passphrase]').fill(PASSPHRASE);
   await p.locator('#login-form button').click(); await visible(p, '#application');
 }
 async function axe(p, name) {
@@ -80,23 +80,43 @@ async function item(p, { kind = 'expense', name = 'Synthetic expense', amount = 
 }
 async function put(p, plan) {
   return p.evaluate(async plan => {
-    const state = await (await fetch('/api/plan')).json(), session = await (await fetch('/api/session')).json();
-    return (await fetch('/api/plan', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf }, body: JSON.stringify({ expectedRevision: state.revision, plan, operation: 'replace', confirmed: true }) })).status;
+    const state = await (await fetch((document.documentElement.dataset.basePath || '') + '/api/plan')).json(), session = await (await fetch((document.documentElement.dataset.basePath || '') + '/api/session')).json();
+    return (await fetch((document.documentElement.dataset.basePath || '') + '/api/plan', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session.csrf }, body: JSON.stringify({ expectedRevision: state.revision, plan, operation: 'replace', confirmed: true }) })).status;
   }, plan);
 }
 try {
-  [{ base }] = await once(child, 'message'); assert.match(base, /^http:\/\/127\.0\.0\.1:\d+$/); assert.ok(!['3080', '3081'].includes(new URL(base).port));
+  [{ base }] = await once(child, 'message'); assert.match(base, /^http:\/\/127\.0\.0\.1:\d+(?:\/lichtaichinh)?$/); assert.ok(!['3080', '3081'].includes(new URL(base).port));
   browser = await chromium.launch({ executablePath: process.env.BROWSER_PATH || undefined, headless: true });
   await check('two localhost-port worktree cookie jars coexist and peer logout is isolated', () => stackBrowserChecks(browser));
+  await check('malformed present browser prefix fails closed before any API request', async () => {
+    const isolated = await browser.newContext();
+    try {
+      const p = await isolated.newPage(), calls = [], failures = [];
+      p.on('request', r => { if (new URL(r.url()).pathname.includes('/api/')) calls.push(r.url()); });
+      p.on('pageerror', e => failures.push(e.message));
+      await p.route(base + '/', async route => {
+        const response = await route.fetch();
+        await route.fulfill({ response, body: (await response.text()).replace(/data-base-path="[^"]*"/, 'data-base-path="/bad/"') });
+      });
+      await p.goto(base + '/');
+      await p.waitForFunction(() => document.readyState === 'complete');
+      assert.deepEqual(failures, ['Invalid application base path']); assert.deepEqual(calls, []);
+    } finally { await isolated.close(); }
+  });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, acceptDownloads: true });
   page = await context.newPage(); watch(page);
   await check('private login, five widths, no implicit sample or save', async () => {
-    await page.goto(base); await visible(page, '#login-form');
+    await page.goto(base + '/'); await visible(page, '#login-form');
     for (const width of [320, 360, 390, 768, 1440]) { await page.setViewportSize({ width, height: 1000 }); await overflow(page); await axe(page, `login-${width}`); }
     await page.locator('[name=passphrase]').fill('wrong-synthetic'); await page.locator('#login-form button').click(); await visible(page, '#login-error');
     await page.locator('[name=passphrase]').fill(PASSPHRASE); await page.locator('#login-form button').click(); await visible(page, '#application');
     assert.equal((await snapshot(page)).plan, null); assert.equal(await page.locator('.calendar-table thead th').count(), 15);
     assert.deepEqual(planWrites, []);
+    assert.equal(await page.locator('.brand').getAttribute('href'), new URL(base).pathname.replace(/\/$/, '') + '/');
+    await page.locator('.brand').click(); await visible(page, '#application');
+    const loaded = await page.evaluate(() => performance.getEntriesByType('resource').map(r => new URL(r.name).pathname));
+    const prefix = new URL(base).pathname.replace(/\/$/, '');
+    for (const asset of ['app.js', 'base-path.js', 'model.js', 'expense-tags.js', 'styles.css']) assert.ok(loaded.includes(prefix + '/' + asset), asset);
   });
   await check('explicit setup, default 14-month chronology, safe invalid window', async () => {
     await page.locator('#settings-button').click(); await axe(page, 'setup');
@@ -241,7 +261,7 @@ try {
     const state = await snapshot(page), downloadEvent = page.waitForEvent('download'); await page.locator('#export-button').click();
     const file = await downloadEvent; await file.saveAs(path.join(artifacts, 'synthetic-export.json'));
     assert.deepEqual(JSON.parse(await readFile(path.join(artifacts, 'synthetic-export.json'), 'utf8')), state.plan);
-    const exported = await page.evaluate(async () => (await fetch('/api/export')).json()); assert.deepEqual(exported, state.plan);
+    const exported = await page.evaluate(async () => (await fetch((document.documentElement.dataset.basePath || '') + '/api/export')).json()); assert.deepEqual(exported, state.plan);
     await page.locator('#import-file').setInputFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('{broken') }); await visible(page, '#toast'); assert.deepEqual(await snapshot(page), state);
     await page.locator('#import-file').setInputFiles({ name: 'cancel.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(blankPlan())) }); await cancelConfirm(page); assert.deepEqual(await snapshot(page), state);
     await importPlan(page, exported); assert.deepEqual((await snapshot(page)).plan, exported);
@@ -313,7 +333,7 @@ try {
     await resetDemo(page); assert.deepEqual((await snapshot(page)).plan, demoPlan());
   });
   await check('stale family sample replacement refuses overwrite and preserves newer plan for explicit recovery', async () => {
-    const other = await context.newPage(); watch(other); await other.goto(base); await visible(other, '#application');
+    const other = await context.newPage(); watch(other); await other.goto(base + '/'); await visible(other, '#application');
     const newer = { ...demoPlan(), name: 'Synthetic newer family plan' }; assert.equal(await put(other, newer), 200);
     const serverState = await snapshot(other);
     await requestDemo(page); await confirm(page);
@@ -339,7 +359,7 @@ try {
   });
   await check('revision conflicts retain unsaved form/export; explicit reload and reapply', async () => {
     await importPlan(page, blankPlan()); await nav(page, 'expense'); await object(page, 'Conflict object');
-    const other = await context.newPage(); watch(other); await other.goto(base); await visible(other, '#application');
+    const other = await context.newPage(); watch(other); await other.goto(base + '/'); await visible(other, '#application');
     const state = await snapshot(other); state.plan.name = 'Other browser'; assert.equal(await put(other, state.plan), 200);
     await item(page, { name: 'Unsaved conflict', amount: '5' }); await page.locator('#edit-form button[type=submit]').click();
     await page.waitForFunction(() => document.querySelector('#save-status').textContent.startsWith('CHƯA LƯU'));
@@ -447,7 +467,7 @@ try {
   await check('fresh browser reads persisted state; logout denies finance; no active actual fields', async () => {
     const state = await snapshot(page), fresh = await browser.newContext(); const p = await fresh.newPage(); watch(p); await login(p); assert.deepEqual((await snapshot(p)).plan, state.plan);
     assert.equal(await p.locator('[name=actual], [data-actual]').count(), 0);
-    await p.locator('#logout-button').click(); await confirm(p); await visible(p, '#login-form'); assert.equal(await p.evaluate(async () => (await fetch('/api/plan')).status), 401); await fresh.close();
+    await p.locator('#logout-button').click(); await confirm(p); await visible(p, '#login-form'); assert.equal(await p.evaluate(async () => (await fetch((document.documentElement.dataset.basePath || '') + '/api/plan')).status), 401); await fresh.close();
     assert.deepEqual(errors, []); assert.deepEqual(external, []);
     const allowed = { '/api/session': [401], '/api/login': [401], '/api/plan': [401, 409, 503] };
     assert.deepEqual(responseLedger.filter(r => !allowed[r.path]?.includes(r.status)), []);

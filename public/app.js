@@ -1,6 +1,8 @@
 import { MAX_BYTES, blankPlan, demoPlan, validatePlan, forecast, monthRange, occurs, plannedAmount, estimateMonth, changeWindow, reviseEstimate, latestSnapshot, cashBaseline, debtTotal, setSnapshot, convertLegacy, todayISO } from './model.js';
 import { parseAmount, formatAmountInput } from './amount-input.js';
 import { tagLibrary, groupExpenses, uniqueTagName, removeTagDefinition } from './expense-tags.js';
+import { validateBasePath, apiPath } from './base-path.js';
+const basePath = validateBasePath(document.documentElement.getAttribute('data-base-path') ?? '');
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const h = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = value => value === null ? 'Chưa biết' : `${new Intl.NumberFormat('vi-VN').format(value)} ₫`;
@@ -50,7 +52,7 @@ function toast(message) { clearTimeout(toastTimer); $('#toast').textContent = me
 function warning(message) { $('#storage-warning').textContent = message; $('#storage-warning').hidden = !message; }
 function authenticated(value) { $('#access-panel').hidden = value; $('#application').hidden = !value; if (!value) $$('dialog[open]').forEach(d => d.close()); }
 async function api(url, options = {}) {
-  const response = await fetch(url, { ...options, headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf, ...options.headers } });
+  const response = await fetch(apiPath(basePath, url), { ...options, headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf, ...options.headers } });
   const result = await response.json();
   if (!response.ok) { if (response.status === 401) authenticated(false); throw Object.assign(new Error(result.error || 'request-failed'), { status: response.status }); }
   return result;

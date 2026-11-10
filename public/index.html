@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="vi">
+<html lang="vi" data-base-path="{{BASE_PATH}}">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#244d40"><title>Money Seasons · Kế hoạch gia đình</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/styles.css">
-  <script type="module" src="/app.js"></script>
+  <link rel="icon" href="{{BASE_PATH}}/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="{{BASE_PATH}}/styles.css">
+  <script type="module" src="{{BASE_PATH}}/app.js"></script>
 </head>
 <body>
   <a class="skip" href="#main">Đến nội dung chính</a>
@@ -14,7 +14,7 @@
     <p>Chỉ truy cập qua HTTPS riêng tư. Mọi thành viên được phép xem và sửa cùng kế hoạch.</p>
   </section>
   <div class="shell" id="application" hidden>
-    <aside class="sidebar"><a href="/" class="brand"><span class="brand-mark" aria-hidden="true">◒</span><span>money<br>seasons<small>Cùng hiểu · cùng lên kế hoạch</small></span></a>
+    <aside class="sidebar"><a href="{{BASE_PATH}}/" class="brand"><span class="brand-mark" aria-hidden="true">◒</span><span>money<br>seasons<small>Cùng hiểu · cùng lên kế hoạch</small></span></a>
       <nav class="navigation" aria-label="Các tính năng">
         <button class="nav-link active" data-view="calendar" aria-current="page"><span class="nav-symbol" aria-hidden="true">▦</span>Lịch tài chính</button>
         <button class="nav-link" data-view="expense"><span class="nav-symbol" aria-hidden="true">↗</span>Rõ chi</button>

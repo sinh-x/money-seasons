@@ -9,10 +9,11 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { checkout, worktreeIdentity, privateDir, readPrivate, inside, fail, withInstanceLock, GuardError } from './stack-identity.mjs';
 import { docker } from './local-stack.mjs';
+import { validateBasePath } from '../public/base-path.js';
 
 export const productionProject = 'money-seasons-production';
 const sourceLabel = 'org.money-seasons.source', purposeLabel = 'org.money-seasons.purpose', revisionLabel = 'org.opencontainers.image.revision';
-const keys = ['MONEY_SEASONS_PRODUCTION_REPO', 'MONEY_SEASONS_RELEASE', 'MONEY_SEASONS_DATA_DIR', 'MONEY_SEASONS_PASSPHRASE_FILE', 'MONEY_SEASONS_CADDY_DIR', 'MONEY_SEASONS_ORIGINS', 'MONEY_SEASONS_COOKIE_NAME', 'MONEY_SEASONS_DOCKER_HOST', 'MONEY_SEASONS_DOCKER_ID'];
+const keys = ['MONEY_SEASONS_PRODUCTION_REPO', 'MONEY_SEASONS_RELEASE', 'MONEY_SEASONS_DATA_DIR', 'MONEY_SEASONS_PASSPHRASE_FILE', 'MONEY_SEASONS_CADDY_DIR', 'MONEY_SEASONS_ORIGINS', 'MONEY_SEASONS_BASE_PATH', 'MONEY_SEASONS_COOKIE_NAME', 'MONEY_SEASONS_DOCKER_HOST', 'MONEY_SEASONS_DOCKER_ID'];
 export function productionSettings(raw) {
   const seen = new Set();
   for (const line of raw.split(/\r?\n/).filter(s => s.trim() && !s.trim().startsWith('#'))) {
@@ -20,13 +21,25 @@ export function productionSettings(raw) {
     if (!keys.includes(key) || seen.has(key)) fail('Unknown/duplicate production setting'); seen.add(key);
   }
   const config = parseEnv(raw);
-  for (const key of keys.filter(k => k !== 'MONEY_SEASONS_COOKIE_NAME')) if (!config[key]) fail('Missing explicit private production setting');
+  for (const key of keys.filter(k => !['MONEY_SEASONS_COOKIE_NAME', 'MONEY_SEASONS_BASE_PATH'].includes(k))) if (!config[key]) fail('Missing explicit private production setting');
   for (const key of ['MONEY_SEASONS_PRODUCTION_REPO', 'MONEY_SEASONS_DATA_DIR', 'MONEY_SEASONS_PASSPHRASE_FILE', 'MONEY_SEASONS_CADDY_DIR']) if (!path.isAbsolute(config[key]) || path.resolve(config[key]) !== config[key]) fail('Canonical absolute production paths required');
-  if (!/^[a-f0-9]{40}$/.test(config.MONEY_SEASONS_RELEASE) || config.MONEY_SEASONS_ORIGINS !== 'https://localhost:3443' || !config.MONEY_SEASONS_DOCKER_HOST.startsWith('unix:///')) fail('Invalid release/local origin/explicit Unix daemon');
+  if (!/^[a-f0-9]{40}$/.test(config.MONEY_SEASONS_RELEASE) || !config.MONEY_SEASONS_DOCKER_HOST.startsWith('unix:///')) fail('Invalid release/explicit Unix daemon');
+  const prefix = validateBasePath(config.MONEY_SEASONS_BASE_PATH);
+  if (!['', '/lichtaichinh'].includes(prefix)) fail('Unknown production prefix profile');
+  const origins = config.MONEY_SEASONS_ORIGINS.split(',');
+  const expected = prefix ? ['https://drgnfly.tail10c2c6.ts.net', 'https://localhost:3443'] : ['https://localhost:3443'];
+  if (origins.length !== expected.length || new Set(origins).size !== origins.length || origins.some(o => !expected.includes(o))) fail('Invalid production origin profile');
+  config.MONEY_SEASONS_ORIGINS = expected.join(',');
   if (config.MONEY_SEASONS_COOKIE_NAME && config.MONEY_SEASONS_COOKIE_NAME !== 'ms_session' && !/^ms_dev_[a-f0-9]{64}$/.test(config.MONEY_SEASONS_COOKIE_NAME)) fail('Invalid cookie namespace');
   const data = config.MONEY_SEASONS_DATA_DIR, ca = config.MONEY_SEASONS_CADDY_DIR, secret = config.MONEY_SEASONS_PASSPHRASE_FILE;
   if (inside(data, ca) || inside(ca, data) || inside(secret, data) || inside(secret, ca)) fail('Production data/CA/credential paths must be separate');
   return config;
+}
+export function productionEnvironment(config) {
+  // Private pins only: never inherit ambient MONEY_SEASONS_*, COMPOSE_* or Docker context.
+  return { PATH: process.env.PATH, HOME: os.homedir(), COMPOSE_DISABLE_ENV_FILE: '1', DOCKER_HOST: config.MONEY_SEASONS_DOCKER_HOST,
+    ...config, MONEY_SEASONS_BASE_PATH: config.MONEY_SEASONS_BASE_PATH || '',
+    MONEY_SEASONS_PROXY_PROFILE: config.MONEY_SEASONS_BASE_PATH ? 'tailnet-local' : 'root-local' };
 }
 export function productionArgs(root, args) {
   return ['compose', '--env-file', '/dev/null', '--project-directory', root, '-p', productionProject, '-f', path.join(root, 'compose.yaml'), '-f', path.join(root, 'compose.production-local.yaml'), ...args];
@@ -41,7 +54,7 @@ export async function productionContext(command) {
   if (['up', 'build', 'config', 'verify'].includes(command) && (git('rev-parse', 'HEAD') !== config.MONEY_SEASONS_RELEASE || git('status', '--porcelain'))) fail('Production requires the exact pinned clean main commit; no automatic Git update');
   await privateDir(config.MONEY_SEASONS_DATA_DIR); await privateDir(config.MONEY_SEASONS_CADDY_DIR);
   await readPrivate(config.MONEY_SEASONS_PASSPHRASE_FILE, 4096);
-  const env = { PATH: process.env.PATH, HOME: os.homedir(), COMPOSE_DISABLE_ENV_FILE: '1', DOCKER_HOST: config.MONEY_SEASONS_DOCKER_HOST, ...config };
+  const env = productionEnvironment(config);
   const run = args => docker(args, { env, cwd: identity.worktree, timeout: 180_000 });
   if (run(['info', '--format', '{{.ID}}']) !== config.MONEY_SEASONS_DOCKER_ID) fail('Production Docker daemon identity mismatch');
   return { config, root: identity.worktree, run, base: path.dirname(config.MONEY_SEASONS_PASSPHRASE_FILE) };
@@ -59,6 +72,24 @@ export function verifyProductionContainer(c, { config, root }) {
     if (Object.keys(ports).length !== 1 || ports['3080/tcp']?.length !== 1 || ports['3080/tcp'][0].HostIp !== '127.0.0.1' || ports['3080/tcp'][0].HostPort !== '3080' || Object.keys(c.NetworkSettings.Networks).join() !== `${productionProject}_default`) fail('Unexpected backend publication/network');
   } else if (c.HostConfig.NetworkMode !== 'host') fail('Unexpected Caddy network');
   return service;
+}
+export function productionProfileMatches(c, config) {
+  const service = c.Config?.Labels?.['com.docker.compose.service'];
+  if (!['web', 'caddy'].includes(service) || c.Config.Labels[revisionLabel] !== config.MONEY_SEASONS_RELEASE) return false;
+  const expected = { MONEY_SEASONS_BASE_PATH: config.MONEY_SEASONS_BASE_PATH || '' };
+  if (service === 'web') Object.assign(expected, { MONEY_SEASONS_ORIGINS: config.MONEY_SEASONS_ORIGINS, MONEY_SEASONS_COOKIE_NAME: config.MONEY_SEASONS_COOKIE_NAME || 'ms_session' });
+  else expected.MONEY_SEASONS_PROXY_PROFILE = config.MONEY_SEASONS_BASE_PATH ? 'tailnet-local' : 'root-local';
+  // Compare only the allowlisted public config, without dumping raw environments.
+  return Object.entries(expected).every(([key, value]) => {
+    const entries = (c.Config.Env || []).filter(e => e.startsWith(key + '='));
+    return entries.length === 1 && entries[0] === key + '=' + value;
+  });
+}
+export function productionProbeRoutes(config) {
+  const prefix = config.MONEY_SEASONS_BASE_PATH || '';
+  const routes = [['/healthz', 200], [prefix + '/', 200], ...['session', 'plan', 'export'].map(p => [prefix + '/api/' + p, 401])];
+  if (prefix) routes.push(['/', 308, prefix + '/'], [prefix, 308, prefix + '/'], [prefix + '?x=%2Fsafe&n=1', 308, prefix + '/?x=%2Fsafe&n=1'], ['/app.js', 404], ['/api/plan', 404], [prefix + 'x/', 404], [prefix + prefix + '/', 404]);
+  return routes;
 }
 export function productionInventory(context) {
   const { config, root, run } = context;
@@ -89,13 +120,14 @@ async function settled(data) {
 export async function verifyProduction(context) {
   const containers = productionInventory(context);
   if (containers.length !== 2 || containers.some(c => !c.State.Running || c.State.Health?.Status !== 'healthy')) fail('Production services are not healthy');
+  if (containers.some(c => !productionProfileMatches(c, context.config))) fail('Production release/profile mismatch; owned services require authorized recreation');
   const ca = await fs.readFile(path.join(context.config.MONEY_SEASONS_CADDY_DIR, 'caddy/pki/authorities/local/root.crt'));
-  for (const [route, status] of [['/healthz', 200], ['/api/session', 401], ['/api/plan', 401], ['/api/export', 401]]) {
+  for (const [route, status, location] of productionProbeRoutes(context.config)) {
     const actual = await new Promise((resolve, reject) => {
-      const req = https.get({ hostname: 'localhost', family: 4, port: 3443, path: route, ca, rejectUnauthorized: true }, res => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+      const req = https.get({ hostname: 'localhost', family: 4, port: 3443, path: route, ca, rejectUnauthorized: true }, res => { res.resume(); res.on('end', () => resolve({ status: res.statusCode, location: res.headers.location })); });
       req.setTimeout(10_000, () => req.destroy(new Error('HTTPS timeout'))); req.on('error', reject);
     });
-    if (actual !== status) fail('Production HTTPS/unauthorized boundary check failed');
+    if (actual.status !== status || actual.location !== location) fail('Production HTTPS/routing/unauthorized boundary check failed');
   }
   return containers;
 }
@@ -111,10 +143,10 @@ export async function main(command) {
       if (!before.some(c => c.Config.Labels['com.docker.compose.service'] === 'web' && c.State.Running)) { await freePort(3080, '127.0.0.1'); await settled(config.MONEY_SEASONS_DATA_DIR); }
       if (!before.some(c => c.Config.Labels['com.docker.compose.service'] === 'caddy' && c.State.Running)) { await freePort(3443, '127.0.0.1'); await freePort(3443, '::1'); }
       for (const service of ['web', 'caddy']) run(['image', 'inspect', `${productionProject}-${service}:${config.MONEY_SEASONS_RELEASE}`]);
-      compose(['up', '-d', '--no-build', '--pull', 'never', '--wait', '--wait-timeout', '90']);
+      compose(['up', '-d', '--no-build', '--pull', 'never', '--force-recreate', '--wait', '--wait-timeout', '90']);
     }
     const containers = command === 'status' ? before : await verifyProduction(context);
-    console.log(JSON.stringify({ role: 'production', source: root, branch: 'main', release: config.MONEY_SEASONS_RELEASE, url: 'https://localhost:3443', backend: 'http://127.0.0.1:3080', services: containers.map(c => ({ service: c.Config.Labels['com.docker.compose.service'], id: c.Id, revision: c.Config.Labels[revisionLabel], state: c.State.Status, health: c.State.Health?.Status })) }, null, 2));
+    console.log(JSON.stringify({ role: 'production', source: root, branch: 'main', release: config.MONEY_SEASONS_RELEASE, url: 'https://localhost:3443' + (config.MONEY_SEASONS_BASE_PATH || '') + '/', profile: config.MONEY_SEASONS_BASE_PATH ? 'tailnet-local' : 'root-local', backend: 'http://127.0.0.1:3080', services: containers.map(c => ({ service: c.Config.Labels['com.docker.compose.service'], id: c.Id, revision: c.Config.Labels[revisionLabel], configuredProfileMatches: productionProfileMatches(c, config), state: c.State.Status, health: c.State.Health?.Status })) }, null, 2));
   });
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -1,7 +1,7 @@
 // Test-only child. Not copied into the production image and never used by npm start.
 import { testApp } from './fixture-support.mjs';
 let failure = null;
-const app = await testApp({ hook: async stage => { if (failure === stage) throw new Error('synthetic failure'); } });
+const app = await testApp({ basePath: process.argv.includes('--prefix') ? '/lichtaichinh' : '', hook: async stage => { if (failure === stage) throw new Error('synthetic failure'); } });
 process.send({ base: app.base });
 let closing = false;
 async function close() { if (!closing) { closing = true; await app.close(); process.disconnect?.(); } }
