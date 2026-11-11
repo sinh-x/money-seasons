@@ -37,7 +37,7 @@ async function body(req, limit) {
   catch { throw error('invalid-json', 400); }
 }
 
-export function createServer({ store, auth, basePath = '' } = {}) {
+export function createServer({ store, household, auth, basePath = '' } = {}) {
   validateBasePath(basePath);
   const escapedPrefix = basePath.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const server = http.createServer({ maxHeaderSize: 16_384 }, async (req, res) => {
@@ -54,20 +54,40 @@ export function createServer({ store, auth, basePath = '' } = {}) {
     catch { res.writeHead(400); res.end('Bad request'); return; }
     try {
       if (pathname.startsWith('/api/')) {
-        if (!store || !auth) throw error('not-configured', 503);
+        if ((!store && !household) || !auth) throw error('not-configured', 503);
         if (pathname === '/api/login' && req.method === 'POST') {
           auth.boundary(req, true);
-          const input = await body(req, 4096), login = await auth.login(req, input?.passphrase);
-          res.setHeader('Set-Cookie', login.cookie); json(200, { csrf: login.csrf }); return;
+          const input = await body(req, 4096), login = await auth.login(req, household ? input : input?.passphrase);
+          res.setHeader('Set-Cookie', login.cookie); json(200, { csrf: login.csrf, ...(login.member ? { member: login.member } : {}) }); return;
         }
         const mutation = !['GET', 'HEAD'].includes(req.method);
         const session = auth.session(req, mutation);
-        if (pathname === '/api/session' && req.method === 'GET') { json(200, { csrf: session.csrf }); return; }
+        if (pathname === '/api/session' && req.method === 'GET') { json(200, { csrf: session.csrf, ...(session.member ? { member: session.member } : {}) }); return; }
         if (pathname === '/api/logout' && req.method === 'POST') {
           res.setHeader('Set-Cookie', auth.logout(req)); json(200, { loggedOut: true }); return;
         }
-        // The legacy store/routes are whole-plan. Never let a staged member-auth
-        // provider accidentally expose them before scoped persistence is wired.
+        if (household) {
+          if (!session.member) throw error('member-login-required', 401);
+          // No query-supplied owner, scope, role or alternate export is accepted.
+          if (new URL(req.url, 'http://localhost').search) throw error('invalid-query', 400);
+          const reads = { '/api/plan': 'individual', '/api/home': 'home' };
+          const exports = { '/api/export': 'individual', '/api/home/export': 'home' };
+          if (req.method === 'GET' && Object.hasOwn(reads, pathname)) {
+            json(200, await household.read(session.member, reads[pathname])); return;
+          }
+          if (req.method === 'GET' && Object.hasOwn(exports, pathname)) {
+            const value = await household.export(session.member, exports[pathname]);
+            res.setHeader('Content-Disposition', 'attachment; filename="money-seasons.json"'); json(200, value); return;
+          }
+          if (req.method === 'POST' && ['/api/records', '/api/sharing'].includes(pathname)) {
+            const input = await body(req, MAX_BYTES);
+            const actor = auth.session(req, true).member; // Body parsing can outlive a revocation.
+            json(200, await household[pathname === '/api/records' ? 'change' : 'share'](actor, input)); return;
+          }
+          // No whole-Home PUT, raw store, foreign-plan or generic patch endpoint.
+          throw error('api-method-or-path-not-found', 404);
+        }
+        // Never let a staged member-auth provider expose legacy whole-plan routes.
         if (session.member) throw error('member-finance-not-configured', 503);
         if (pathname === '/api/plan' && req.method === 'GET') { json(200, await store.read()); return; }
         if (pathname === '/api/export' && req.method === 'GET') {

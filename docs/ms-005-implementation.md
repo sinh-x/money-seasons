@@ -5,9 +5,10 @@
 **Partial implementation; not product acceptance or a deployable multi-user feature.**
 This is the living builder index for the r003 individual-plan/live-Home requirements.
 P1 adds isolated membership/schema primitives; P2a adds member-session revocation
-and a current-source shared-write reducer. The production entry point, finance HTTP
-API, storage format and UI still use the existing single shared plan. Do not deploy this
-as privacy isolation or migrate real data on the strength of these foundations.
+and a current-source shared-write reducer. P2b1 adds an explicitly injected scoped
+HTTP service and durable household transactions. The **production entry point and
+UI still use the existing single shared plan**; member mode is test-integrated only.
+Do not deploy this as privacy isolation or migrate real data on these checkpoints.
 
 Requirements: `agent-teams/requirements/artifacts/packages/MS-005/ms-005-individual-home-v4/r003/requirements.md`;
 paired `uat.md` contains 14 unexecuted human scenarios. Native publication decision:
@@ -109,6 +110,60 @@ first failure preceded implementation, is preserved, and was repaired by adding
 missing behavior, not weakening tests. P2a addresses part of FR1–6/11 and NFR1/4/5;
 no complete FR/AC acceptance is claimed. P2a commit is recorded in the ticket.
 
+### P2b1 durable scoped HTTP checkpoint — d-59c27f
+
+Resumed clean P2a `41ca744270db0f1efa2c8ede207313c9ec364c31` under current native
+advisory sole-owner admission. Predecessor registry terminal timeout does not erase
+its accepted commits. No baseline approval, prior phase or original data replay.
+
+- `persistence.mjs`: household-specific format with the **same** `plan.json` and
+  `writer.lock`, so legacy/household writers cannot coexist or reinterpret each
+  other's source. No automatic migration. Household reducers run against current
+  state under serialized CAS; private modes, fsync/rename, fault handling and
+  uncertain-durability write lockout reuse the legacy engine. Authorization is
+  rechecked in the queue and immediately before rename. Per-individual byte/list
+  limits remain; aggregate source/Home is not truncated to one individual's cap.
+- `household-service.mjs`: server-session identity/epoch checks, own-only or shared
+  projections/exports, current-source confirmed record changes and owner-only
+  sharing. No raw household response, generic whole-store PUT, client role or
+  foreign-owner selector. Acknowledgement contains only revision; queued reads and
+  exports revalidate identity. Uncertain exports fail closed; reads mark uncertainty.
+- `server.mjs`: explicit injected household service selects scoped routes; no
+  production activation. `/api/plan`, `/api/export` are own-only in member mode;
+  `/api/home`, `/api/home/export` are shared-only; POST `/api/records` and
+  `/api/sharing` are bounded, CSRF-protected operations. Current session is reread
+  after body parsing. Member auth without scoped service still rejects legacy reads.
+- Synthetic tests cover admin/private denial, metadata exclusion, forged fields,
+  confirmation/CSRF, source-only acknowledgements, collaborative create/delete,
+  revocation before rename, concurrent revisions, oversize requests, restart,
+  legacy-source preservation and all five durability fault boundaries. A 1,500-item
+  household larger than 1 MB verifies distinct per-owner versus aggregate limits.
+
+FR1–6/11, AC1–6/12–13, Must NFR1/3/4/5 are partially addressed, **not accepted**.
+NFR2/6 remain live-browser/full independent matrix and human acceptance obligations.
+Durable private administration, metadata editing, import/reset, common period,
+explicit-owner migration and UI are still pending. Membership's in-memory replace
+port is internal, not a durable admin API.
+
+Original test-first failure: `op-e9b69ff0-1a82-4ec1-892f-a6f759fddbd9`, exit 1,
+25 pass/2 module failures (`openHouseholdStore` and `household-service.mjs` absent).
+First implementation rerun `op-2eb819c8-d5c4-4b11-a7de-67dd5875bdac`: 61/61 pass.
+More byte-cap/hostile HTTP tests were then added. Final ordered checks (all exit 0,
+no skips, completed/allowed/available with settled cleanup):
+
+| Order | Command | Result | Operation |
+|---|---|---|---|
+| 1 | `node --test test/auth.test.mjs test/membership.test.mjs test/persistence.test.mjs test/server.test.mjs test/sharing.test.mjs` | 63/63 | `op-4aba2f03-465a-4c12-a3ab-8b895ee8030c` |
+| 2 | `npm run check` | pass | `op-ab02d039-5a75-4bfc-a8c9-d09d9fa982a7` |
+| 3 | `node --test test/home.test.mjs test/model.test.mjs test/base-path.test.mjs test/prefix-proxy.test.mjs` | 23/23 | `op-c677dd17-b84d-4d5d-a2a3-e35982cabc00` |
+
+All commands use the authenticated checkout; no independent full matrix claim.
+`git diff --check` passed; the complete JSON-encoded NUL-safe inventory contained
+exactly the seven intended paths, no rename/binary/unrelated work. Read-only search
+`op-c737687c-5bf2-4b69-a589-58ac47e848ad` exited 1 because the second `rg` found no
+literal `api/` in the proxy module; it was not a product test failure. No mutation
+was replayed. Commit SHA is recorded on the ticket after commit.
+
 ## 5. Findings and admission limits
 
 Read-only `ppa decision verify` returned `WORKFLOW_SOURCE` at `admitted-run`
@@ -127,17 +182,16 @@ comments preserve engineering evidence, not a claim that an external session log
 No independent review, full matrix execution, hosted CI, browser/UAT observation,
 human acceptance, push/PR/merge, deployment, real migration or checkout return.
 No implementation child. No legacy approval/counter history changed.
-P1/P2a foundations remain unactivated until separately tested scoped
-server/persistence/UI integration. Existing persisted records were not converted.
+Production member mode remains unactivated until durable membership, migration
+and UI integration are separately tested. Existing persisted records were not converted.
 
 ## 7. Remaining dependency-ordered work
 
-1. P2b: durable private user management and operator-role reload, household
-   persistence, authenticated scoped API reads/writes/exports, owner-only sharing,
-   serialized current-member+permission+CAS checks, hostile-ID/import tests. Wire
-   the P2a directory only after acknowledged durable updates; preserve the legacy
-   route guard until actual scoped responses and writes are implemented. Renew
-   all five-file P2 checks plus focused prefix/home/syntax checks after changes.
+1. P2b2: durable private user management and operator-role reload. Wire the P2a
+   directory only after acknowledged durable updates, fail closed on uncertain
+   credential state; no in-app roles or member deletion. P2b1 scoped household
+   persistence/HTTP is present but production startup remains legacy. Renew all
+   five-file P2 checks plus focused prefix/home/model/syntax checks after changes.
 2. P3: common period administration, current member validation, explicit enabled
    migration owner with exact original archive, own-only import/reset and full
    pooled finance/history/tag compatibility. No automatic conversion.
@@ -156,7 +210,7 @@ validators to accept credentials/roles. Scope supporting metadata down to values
 not merely whole tag keys. Never validate a pooled Home using one individual's
 500-record cap. Pure-model privacy tests are necessary but cannot prove server
 identity, transactional authorization, session revocation or actual live refresh.
-Resume from committed P1/P2a at **P2b**, not a replay of the resolved requirements
+Resume from accepted local checkpoints at **P2b2**, not a replay of the resolved requirements
 baseline mismatch. This XL implementation is intentionally checkpointed before the
 next security-critical storage/API integration; it is not ready for UAT or release.
 The remaining required phases are unfinished, not skipped-and-passing.
