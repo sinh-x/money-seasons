@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { createServer } from '../server.mjs';
 import { testApp } from '../scripts/fixture-support.mjs';
 import { blankPlan, demoPlan, convertLegacy, forecast } from '../public/model.js';
 import { demoPlan as legacyDemo } from '../public/legacy-model.js';
@@ -29,6 +30,22 @@ test('health/assets/HEAD retain types and safety headers; private files never se
   assert.equal((await fetch(base + '/unknown-asset.js')).status, 404);
   for (const url of ['/package.json', '/plan.json', '/data/plan.json', '/writer.lock', '/auth.mjs', '/.env', '/..%2fREADME.md', '/%2e%2e/README.md']) assert.equal((await fetch(base + url)).status, 404);
   for (const method of ['POST', 'PUT', 'DELETE']) assert.equal((await fetch(base, { method, body: 'synthetic' })).status, 405);
+});
+
+test('member sessions cannot reach the legacy unscoped finance API during staged integration', async t => {
+  let reads = 0, writes = 0;
+  const store = { read() { reads++; return { plan: { private: 'must-not-leak' } }; }, save() { writes++; return {}; } };
+  const auth = { session() { return { csrf: 'synthetic', member: { id: 'lan', admin: true } }; } };
+  const server = createServer({ store, auth });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  assert.ok(![3080, 3081, 3443].includes(server.address().port));
+  for (const [route, method] of [['/api/plan', 'GET'], ['/api/export', 'GET'], ['/api/plan', 'PUT']]) {
+    const response = await fetch(base + route, { method });
+    assert.equal(response.status, 503); assert.deepEqual(await response.json(), { error: 'member-finance-not-configured' });
+  }
+  assert.equal(reads, 0); assert.equal(writes, 0);
 });
 
 test('malformed URLs do not crash server', async () => {

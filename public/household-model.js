@@ -102,3 +102,47 @@ export function setSharing(source, actorId, ownerId, kind, recordId, shared) {
   permission.shared = shared;
   return validateHousehold(next);
 }
+
+// Pure transaction reducer: the persistence owner must call it against CURRENT
+// source and a CURRENT authenticated actor inside its serialized CAS operation.
+// It does not itself acknowledge a save, authenticate a member or grant admin.
+export function applyRecordChange(source, actorId, command) {
+  if (!command || !['create', 'update', 'delete'].includes(command.action)) fail();
+  shape(command, ['ownerId', 'kind', 'id', 'action', 'confirmed', ...(command.action === 'delete' ? [] : ['value'])]);
+  const { ownerId, kind, id, action, value } = command;
+  const historyParent = { snapshots: 'accounts', debtSnapshots: 'debtAccounts' };
+  if (command.confirmed !== true || !validOwner(actorId) || !['items', 'accounts', 'debtAccounts', 'snapshots', 'debtSnapshots'].includes(kind)) fail();
+  const next = validateHousehold(source);
+  if (!next.individuals.some(member => member.ownerId === actorId)) fail();
+  const owner = next.individuals.find(member => member.ownerId === ownerId);
+  if (!owner) fail();
+  const records = owner.plan[kind], existing = records.find(record => record.id === id);
+  if ((action === 'create' && existing) || (action !== 'create' && !existing)) fail();
+  if (action !== 'delete' && (!value || value.id !== id)) fail();
+  const parent = historyParent[kind];
+  if (parent && existing && value && existing.accountId !== value.accountId) fail();
+  if (actorId !== ownerId) {
+    // A new top-level record always belongs to its creator. A new snapshot is
+    // instead part of an already-shared parent's history with the parent's owner.
+    if (action === 'create' && !parent) fail();
+    const permissionId = parent ? (existing ?? value).accountId : id;
+    if (!owner.sharing[parent ?? kind].some(permission => permission.id === permissionId && permission.shared)) fail();
+    if (kind === 'items' && value) {
+      const sharedItems = owner.plan.items.filter(item => owner.sharing.items.some(permission => permission.id === item.id && permission.shared));
+      if (!sharedItems.some(item => item.objectId === value.objectId)) fail();
+      for (const tag of value.tags ?? []) {
+        if (!sharedItems.some(item => item.tags?.some(known => known.keyId === tag.keyId && known.valueId === tag.valueId))) fail();
+      }
+    }
+  }
+  if (action === 'delete') {
+    const history = kind === 'accounts' ? 'snapshots' : kind === 'debtAccounts' ? 'debtSnapshots' : null;
+    if (history && owner.plan[history].some(snapshot => snapshot.accountId === id)) fail();
+    owner.plan[kind] = records.filter(record => record.id !== id);
+    if (parents.includes(kind)) owner.sharing[kind] = owner.sharing[kind].filter(permission => permission.id !== id);
+  } else if (action === 'create') {
+    records.push(structuredClone(value));
+    if (parents.includes(kind)) owner.sharing[kind].push({ id, shared: true });
+  } else records[records.indexOf(existing)] = structuredClone(value);
+  return validateHousehold(next);
+}

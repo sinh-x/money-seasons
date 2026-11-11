@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, chmod, mkdir, symlink, link, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { hashPassword, verifyPassword, validateMembership, authenticateMember, memberIdentity, readPrivateJSON } from '../membership.mjs';
+import { hashPassword, verifyPassword, validateMembership, authenticateMember, memberIdentity, readPrivateJSON, createMembershipDirectory } from '../membership.mjs';
 
 const password = 'synthetic-member-password-only';
 const verifier = { algorithm: 'scrypt', salt: 'a'.repeat(64), key: 'b'.repeat(128) };
@@ -67,6 +67,32 @@ test('session identity is refreshed from current credential/role state, with no 
   assert.notEqual(memberIdentity(users, roles, 'lan').credentialVersion, before.credentialVersion);
   assert.throws(() => memberIdentity(users, roles, 'absent'), /login-required/);
   assert.equal('plan' in before, false);
+});
+
+test('directory reload revokes epochs, cannot delete members, and rejects in-flight stale authentication', async () => {
+  const { users, roles } = fixture(); users.users[0].password = await hashPassword(password);
+  const directory = createMembershipDirectory(users, roles), before = directory.current('lan');
+  const pending = directory.authenticate('lan', password);
+  directory.replace(users, { ...roles, adminIds: ['minh'] });
+  await assert.rejects(pending, /invalid-login/);
+  assert.ok(directory.current('lan').authEpoch > before.authEpoch);
+  const revoked = directory.current('lan').authEpoch;
+  directory.replace(users, roles); assert.ok(directory.current('lan').authEpoch > revoked);
+  const originalEpoch = directory.current('lan').authEpoch;
+  directory.replace(structuredClone(users), structuredClone(roles)); assert.equal(directory.current('lan').authEpoch, originalEpoch);
+  const removed = structuredClone(users); removed.users.pop(); assert.throws(() => directory.replace(removed, roles), /member-deletion-denied/);
+  const changed = structuredClone(users); changed.users[0].password = await hashPassword(password + '-new');
+  assert.throws(() => directory.replace(changed, roles), /credential-version-required/);
+  changed.users[0].credentialVersion++;
+  directory.replace(changed, roles);
+  await assert.rejects(directory.authenticate('lan', password), /invalid-login/);
+  assert.equal((await directory.authenticate('lan', password + '-new')).id, 'lan');
+  const disabled = structuredClone(changed); disabled.users[0].enabled = false;
+  directory.replace(disabled, { version: 1, adminIds: ['minh'] });
+  assert.throws(() => directory.current('lan'), /login-required/);
+  // Failed replacement did not install zero-admin state.
+  assert.throws(() => directory.replace(disabled, roles));
+  assert.equal(directory.current('minh').admin, true);
 });
 
 test('private JSON reads only bounded owned files outside Git, without symlink or hardlink aliases', async t => {

@@ -66,6 +66,9 @@ export function createServer({ store, auth, basePath = '' } = {}) {
         if (pathname === '/api/logout' && req.method === 'POST') {
           res.setHeader('Set-Cookie', auth.logout(req)); json(200, { loggedOut: true }); return;
         }
+        // The legacy store/routes are whole-plan. Never let a staged member-auth
+        // provider accidentally expose them before scoped persistence is wired.
+        if (session.member) throw error('member-finance-not-configured', 503);
         if (pathname === '/api/plan' && req.method === 'GET') { json(200, await store.read()); return; }
         if (pathname === '/api/export' && req.method === 'GET') {
           const { plan } = await store.read();

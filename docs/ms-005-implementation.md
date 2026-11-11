@@ -4,8 +4,9 @@
 
 **Partial implementation; not product acceptance or a deployable multi-user feature.**
 This is the living builder index for the r003 individual-plan/live-Home requirements.
-P1 adds isolated membership/schema primitives. The production entry point, HTTP API,
-storage format and UI still use the existing single shared plan. Do not deploy this
+P1 adds isolated membership/schema primitives; P2a adds member-session revocation
+and a current-source shared-write reducer. The production entry point, finance HTTP
+API, storage format and UI still use the existing single shared plan. Do not deploy this
 as privacy isolation or migrate real data on the strength of these foundations.
 
 Requirements: `agent-teams/requirements/artifacts/packages/MS-005/ms-005-individual-home-v4/r003/requirements.md`;
@@ -71,6 +72,43 @@ requirements-owned eight-command independent matrix. Original RED failure retain
 no failed test was deleted or weakened to produce green. Commit identity is recorded
 in the ticket after commit (avoids a self-referential commit hash here).
 
+### P2a security-core checkpoint
+
+P1 commit: `e141bb0bfac622b5c844c09d93e435f4196c19fc`.
+P2 was split without weakening acceptance: P2a security primitives, then P2b durable
+administration/scoped HTTP integration. P3 depends on **both**, not P2a alone.
+
+- `membership.mjs`: validated in-memory directory, monotonic per-user session
+  epochs across role revocation/restoration, reset, disable and reactivation;
+  rejects member deletion, credential-version rollback and stale in-flight login.
+  Its `replace()` is an internal post-durable-commit/operator port, not a public
+  admin endpoint or a persistence implementation.
+- `auth.mjs`: explicitly selected member provider (exclusive of legacy passphrase),
+  username/password shape checks, current identity/epoch recheck on every request.
+  Existing CSRF, expiry, rate limits, session capacity and prefix/instance cookie
+  isolation remain. Production startup does **not** select member mode yet.
+- `public/household-model.js`: confirmed current-source create/update/delete
+  reducer, current sharing permission, immutable IDs/owner namespace, default
+  sharing for creator-owned records, private metadata/reference restrictions,
+  parent history authorization and account-deletion guards. This is not a CAS
+  store: P2b must invoke it inside serialized current-identity/revision checks.
+- `server.mjs`: staged member sessions are refused before touching legacy whole-plan
+  reads/exports/writes, including admin members. This is a safe integration guard,
+  **not** the completed scoped API. Legacy passphrase flows stay unchanged.
+- Tests extend auth/membership/server and add `test/sharing.test.mjs`.
+
+| Order | Command | Result | Operation |
+|---|---|---|---|
+| RED | `node --test test/auth.test.mjs test/membership.test.mjs test/persistence.test.mjs test/server.test.mjs test/sharing.test.mjs` | exit 1: missing new exports and unguarded mock-member route (200, expected 503); 30 pass/4 fail | `op-aece8929-1e09-49d8-99df-0b038f1e11d8` |
+| 1 | same five-file command | exit 0, 51/51, no skips | `op-b3b6ac68-1682-402b-9221-553c612e2a3e` |
+| 2 | `npm run check` | exit 0 | `op-bc4067b5-ec78-4bee-9d4e-d86e6b1a1192` |
+| 3 | `node --test test/home.test.mjs test/base-path.test.mjs test/prefix-proxy.test.mjs` | exit 0, 12/12, no skips | `op-5809b45d-c370-4582-a8fe-08996e010fc5` |
+
+All final checks completed/allowed/available with exit 0 and settled cleanup. The
+first failure preceded implementation, is preserved, and was repaired by adding
+missing behavior, not weakening tests. P2a addresses part of FR1–6/11 and NFR1/4/5;
+no complete FR/AC acceptance is claimed. P2a commit is recorded in the ticket.
+
 ## 5. Findings and admission limits
 
 Read-only `ppa decision verify` returned `WORKFLOW_SOURCE` at `admitted-run`
@@ -89,14 +127,17 @@ comments preserve engineering evidence, not a claim that an external session log
 No independent review, full matrix execution, hosted CI, browser/UAT observation,
 human acceptance, push/PR/merge, deployment, real migration or checkout return.
 No implementation child. No legacy approval/counter history changed.
-P1 foundations remain inert until separately tested server/persistence/UI integration.
+P1/P2a foundations remain unactivated until separately tested scoped
+server/persistence/UI integration. Existing persisted records were not converted.
 
 ## 7. Remaining dependency-ordered work
 
-1. P2: durable private user management, member sessions/current revocation,
-   authenticated scoped API reads/writes/exports, owner-only sharing, serialized
-   permission+CAS checks, hostile-ID/import tests. Keep the old single-plan path
-   unavailable to member sessions until its responses are properly scoped.
+1. P2b: durable private user management and operator-role reload, household
+   persistence, authenticated scoped API reads/writes/exports, owner-only sharing,
+   serialized current-member+permission+CAS checks, hostile-ID/import tests. Wire
+   the P2a directory only after acknowledged durable updates; preserve the legacy
+   route guard until actual scoped responses and writes are implemented. Renew
+   all five-file P2 checks plus focused prefix/home/syntax checks after changes.
 2. P3: common period administration, current member validation, explicit enabled
    migration owner with exact original archive, own-only import/reset and full
    pooled finance/history/tag compatibility. No automatic conversion.
@@ -115,4 +156,16 @@ validators to accept credentials/roles. Scope supporting metadata down to values
 not merely whole tag keys. Never validate a pooled Home using one individual's
 500-record cap. Pure-model privacy tests are necessary but cannot prove server
 identity, transactional authorization, session revocation or actual live refresh.
-Resume from committed P1; do not replay the resolved requirements-baseline mismatch.
+Resume from committed P1/P2a at **P2b**, not a replay of the resolved requirements
+baseline mismatch. This XL implementation is intentionally checkpointed before the
+next security-critical storage/API integration; it is not ready for UAT or release.
+The remaining required phases are unfinished, not skipped-and-passing.
+
+Self-improvement (`infra`/`skill`): the workflow-only decision verifier gives an
+unhelpful WORKFLOW_SOURCE for document-package IDs. Route those IDs to an explicit
+read-only document decision projection, or describe the unsupported decision family
+before execution. Keep native publication evidence and code-writer admission
+separate; never turn this mismatch into repeated approval or a general edit veto.
+A raw NUL-containing read-only inventory operation also had unproven result
+publication; a fresh JSON-encoded NUL-safe observation succeeded. Preserve the
+original unknown result rather than claiming a proven root cause or replaying a write.

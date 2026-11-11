@@ -1,6 +1,6 @@
 // Private membership primitives. Never serve this module or serialize user/password
 // documents into finance responses. HTTP/session and durable admin writes are separate.
-import { randomBytes, scrypt as derive, timingSafeEqual } from 'node:crypto';
+import { randomBytes, scrypt as derive, timingSafeEqual, createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { constants } from 'node:fs';
 import { open, lstat } from 'node:fs/promises';
@@ -70,6 +70,44 @@ export async function authenticateMember(users, roles, username, password) {
   const valid = await verifyPassword(password, user?.password ?? dummy);
   if (!user || !valid) fail('invalid-login');
   return identity(user, snapshot.roles);
+}
+
+// In-memory view of separately committed private state. replace() is an internal
+// store/operator port, not a public admin API; persist and fsync before installing.
+// Reloads retain monotonic epochs even when the operator restores earlier roles.
+export function createMembershipDirectory(users, roles) {
+  let state = validateMembership(users, roles);
+  const epochs = new Map(state.users.users.map(user => [user.id, 1]));
+  const security = (user, config) => createHash('sha256').update(JSON.stringify([
+    user.username, user.enabled, user.credentialVersion, user.password, config.adminIds.includes(user.id)
+  ])).digest('hex');
+  const current = id => ({ ...memberIdentity(state.users, state.roles, id), authEpoch: epochs.get(id) });
+  return {
+    current,
+    async authenticate(username, password) {
+      const snapshot = state, user = snapshot.users.users.find(user => user.username === username);
+      const epoch = epochs.get(user?.id);
+      const verified = await authenticateMember(snapshot.users, snapshot.roles, username, password);
+      if (epochs.get(verified.id) !== epoch) fail('invalid-login');
+      return current(verified.id);
+    },
+    replace(users, roles) {
+      const next = validateMembership(users, roles), updated = new Map(epochs);
+      for (const old of state.users.users) {
+        const user = next.users.users.find(user => user.id === old.id);
+        if (!user) fail('member-deletion-denied');
+        if (user.credentialVersion < old.credentialVersion ||
+            (JSON.stringify(user.password) !== JSON.stringify(old.password) && user.credentialVersion <= old.credentialVersion)) fail('credential-version-required');
+        if (security(user, next.roles) !== security(old, state.roles)) {
+          if (updated.get(user.id) === Number.MAX_SAFE_INTEGER) fail('session-epoch-exhausted');
+          updated.set(user.id, updated.get(user.id) + 1);
+        }
+      }
+      for (const user of next.users.users) if (!updated.has(user.id)) updated.set(user.id, 1);
+      state = next;
+      for (const [id, epoch] of updated) epochs.set(id, epoch);
+    }
+  };
 }
 
 // Operator-provisioned JSON only. No bootstrap defaults, file creation, role
