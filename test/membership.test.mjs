@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, chmod, mkdir, symlink, link, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, chmod, mkdir, symlink, link, rm } from 'node:fs/promises';
+import { openMembershipManager } from '../membership-service.mjs';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import os from 'node:os';
 import { hashPassword, verifyPassword, validateMembership, authenticateMember, memberIdentity, readPrivateJSON, createMembershipDirectory } from '../membership.mjs';
@@ -9,6 +11,118 @@ const password = 'synthetic-member-password-only';
 const verifier = { algorithm: 'scrypt', salt: 'a'.repeat(64), key: 'b'.repeat(128) };
 const user = (id, changes = {}) => ({ id, username: id, name: 'Synthetic member', enabled: true, credentialVersion: 1, password: verifier, ...changes });
 const fixture = () => ({ users: { version: 1, revision: 1, users: [user('lan'), user('minh')] }, roles: { version: 1, adminIds: ['lan'] } });
+
+async function durableFixture(t, options = {}) {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ms-private-users-'));
+  const { users, roles } = fixture();
+  const hashed = await hashPassword(password); users.users.forEach(u => { u.password = hashed; });
+  await writeFile(path.join(root, 'users.json'), JSON.stringify(users), { mode: 0o600 });
+  const rolesFile = path.join(root, 'roles.json');
+  await writeFile(rolesFile, JSON.stringify(roles), { mode: 0o600 });
+  const manager = await openMembershipManager(root, { rolesFile, ...options });
+  t.after(async () => { await manager.close(); await rm(root, { recursive: true, force: true }); });
+  return { manager, root, rolesFile, users, roles };
+}
+
+test('durable user management is admin-only, strictly shaped and revokes credentials without deleting records', async t => {
+  const { manager: m, root, rolesFile } = await durableFixture(t);
+  const lan = m.current('lan'), minh = m.current('minh');
+  const create = { action: 'create', expectedRevision: 1, id: 'anh', username: 'anh', name: 'Synthetic C', password };
+  const before = await readFile(path.join(root, 'users.json'));
+  await assert.rejects(m.manage(minh, create), e => e.status === 403);
+  await assert.rejects(m.manage(lan, { ...create, admin: true }), e => e.status === 400);
+  await assert.rejects(m.manage(lan, { action: 'access', expectedRevision: 1, id: 'lan', enabled: false }), e => e.status === 400);
+  assert.deepEqual(await readFile(path.join(root, 'users.json')), before);
+  assert.deepEqual(await m.manage(lan, create), { revision: 2 });
+  assert.equal((await m.authenticate('anh', password)).admin, false);
+  const old = m.current('anh');
+  await m.manage(lan, { action: 'reset', expectedRevision: 2, id: 'anh', password: password + '-new' });
+  assert.ok(m.current('anh').authEpoch > old.authEpoch);
+  await assert.rejects(m.authenticate('anh', password));
+  assert.equal((await m.authenticate('anh', password + '-new')).id, 'anh');
+  await m.manage(lan, { action: 'access', expectedRevision: 3, id: 'anh', enabled: false });
+  assert.throws(() => m.current('anh'));
+  await m.manage(lan, { action: 'access', expectedRevision: 4, id: 'anh', enabled: true });
+  assert.ok(m.current('anh').authEpoch > old.authEpoch);
+  const list = await m.list(lan); assert.equal(list.revision, 5); assert.equal(list.users.length, 3);
+  assert.doesNotMatch(JSON.stringify(list), /password|salt|key|credentialVersion/);
+  await assert.rejects(m.list(minh), e => e.status === 403);
+  await m.close();
+  const reopened = await openMembershipManager(root, { rolesFile });
+  try { assert.equal((await reopened.authenticate('anh', password + '-new')).id, 'anh'); }
+  finally { await reopened.close(); }
+});
+
+test('own password change verifies current password and revisions; role reload is private and invalidates old epochs', async t => {
+  const { manager: m, root, rolesFile } = await durableFixture(t);
+  const minh = m.current('minh'), lan = m.current('lan');
+  const command = { expectedRevision: 1, currentPassword: password, password: password + '-own' };
+  const before = await readFile(path.join(root, 'users.json'));
+  await assert.rejects(m.password(minh, { ...command, currentPassword: 'wrong' }), e => e.status === 403);
+  await assert.rejects(m.password(minh, { ...command, ownerId: 'lan' }), e => e.status === 400);
+  assert.deepEqual(await readFile(path.join(root, 'users.json')), before);
+  assert.deepEqual(await m.password(minh, command), { revision: 2 });
+  assert.ok(m.current('minh').authEpoch > minh.authEpoch);
+  await assert.rejects(m.password(minh, { ...command, expectedRevision: 2 }), e => e.status === 401);
+  await assert.rejects(m.manage(lan, { action: 'reset', expectedRevision: 1, id: 'minh', password }), e => e.status === 409);
+  await writeFile(rolesFile, JSON.stringify({ version: 1, adminIds: ['minh'] })); await m.reloadRoles();
+  assert.equal(m.current('lan').admin, false); assert.ok(m.current('lan').authEpoch > lan.authEpoch);
+  await assert.rejects(m.manage(lan, { action: 'reset', expectedRevision: 2, id: 'minh', password }), e => e.status === 401);
+  await writeFile(rolesFile, JSON.stringify({ version: 1, adminIds: [] }));
+  await assert.rejects(m.reloadRoles()); assert.throws(() => m.current('minh'));
+  await writeFile(rolesFile, JSON.stringify({ version: 1, adminIds: ['lan', 'minh'] })); await m.reloadRoles();
+  assert.equal(m.current('minh').admin, true); assert.equal(m.current('lan').admin, true);
+});
+
+for (const point of ['before-write', 'before-file-sync', 'before-rename', 'after-rename', 'after-directory-sync']) {
+  test(`private administration fault ${point}: no acknowledgement; uncertain state blocks authentication`, async t => {
+    let inject = false;
+    const { manager: m, root, rolesFile } = await durableFixture(t, { hook: async stage => { if (inject && stage === point) throw new Error('synthetic'); } });
+    const lan = m.current('lan'); inject = true;
+    await assert.rejects(m.manage(lan, { action: 'reset', expectedRevision: 1, id: 'minh', password: password + '-new' }), e => e.status === 503);
+    const persisted = JSON.parse(await readFile(path.join(root, 'users.json'))), renamed = point.startsWith('after-');
+    assert.equal(persisted.revision, renamed ? 2 : 1);
+    if (renamed) {
+      assert.throws(() => m.current('lan')); await assert.rejects(m.authenticate('lan', password));
+      await assert.rejects(m.reloadRoles()); // Role reload cannot clear uncertain credential state.
+    } else assert.equal((await m.authenticate('minh', password)).id, 'minh');
+    await m.close();
+    const reopened = await openMembershipManager(root, { rolesFile });
+    try { assert.equal((await reopened.authenticate('minh', renamed ? password + '-new' : password)).id, 'minh'); }
+    finally { await reopened.close(); }
+  });
+}
+
+test('pre-provisioned private users required; one writer and concurrent administration CAS', async t => {
+  const { manager: m, root, rolesFile } = await durableFixture(t);
+  await assert.rejects(openMembershipManager(root, { rolesFile }), /writer-lock/);
+  const actor = m.current('lan');
+  const results = await Promise.allSettled(['one', 'two'].map(id => m.manage(actor, { action: 'create', expectedRevision: 1, id, username: id, name: id, password })));
+  assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
+  assert.equal(results.find(r => r.status === 'rejected').reason.status, 409);
+  await m.close(); await rm(path.join(root, 'users.json'));
+  await assert.rejects(openMembershipManager(root, { rolesFile }));
+});
+
+for (const point of ['before-rename', 'after-rename']) {
+  test(`credential writer SIGKILL at ${point} preserves complete bytes and never steals stale lock`, async t => {
+    const { manager: m, root, rolesFile } = await durableFixture(t); await m.close();
+    const code = `import {openMembershipManager} from './membership-service.mjs';
+      const m = await openMembershipManager(${JSON.stringify(root)}, {rolesFile:${JSON.stringify(rolesFile)}, hook:async stage=>{if(stage===${JSON.stringify(point)})process.kill(process.pid,'SIGKILL')}});
+      await m.manage(m.current('lan'), {action:'access',expectedRevision:1,id:'minh',enabled:false});`;
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e', code], { cwd: process.cwd(), timeout: 10_000 });
+    assert.equal(child.signal, 'SIGKILL');
+    const persisted = JSON.parse(await readFile(path.join(root, 'users.json')));
+    assert.equal(persisted.revision, point === 'before-rename' ? 1 : 2);
+    assert.equal(persisted.users.find(u => u.id === 'minh').enabled, point === 'before-rename');
+    await assert.rejects(openMembershipManager(root, { rolesFile }), /writer-lock/);
+    // Test-owned child above is proven terminated; simulate explicit operator recovery.
+    await rm(path.join(root, 'users.lock'));
+    const reopened = await openMembershipManager(root, { rolesFile });
+    try { assert.equal(reopened.current('lan').admin, true); }
+    finally { await reopened.close(); }
+  });
+}
 
 test('private membership validates unique identities and separate operator-only roles', () => {
   const { users, roles } = fixture(), original = JSON.stringify({ users, roles });

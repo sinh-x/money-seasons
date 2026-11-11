@@ -8,6 +8,7 @@ import { createAuth } from '../auth.mjs';
 import { createMembershipDirectory, hashPassword } from '../membership.mjs';
 import { openHouseholdStore } from '../persistence.mjs';
 import { createHouseholdService } from '../household-service.mjs';
+import { openMembershipManager } from '../membership-service.mjs';
 import assert from 'node:assert/strict';
 import { blankPlan } from '../public/model.js';
 import { blankHousehold, individualPlan, setSharing, applyRecordChange, projectHome } from '../public/household-model.js';
@@ -20,25 +21,31 @@ function fixture() {
 }
 const edit = () => ({ ownerId: 'lan', kind: 'items', id: 'income', action: 'update', value: { ...item(), amount: 22_000_000 }, confirmed: true });
 
-async function memberApp(t, { hook, privateIncome = false } = {}) {
+async function memberApp(t, { hook, privateIncome = false, durableUsers = false } = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ms-scoped-api-'));
   const password = 'Synthetic only long password';
   const verifier = await hashPassword(password);
   const users = { version: 1, revision: 1, users: ['lan', 'minh'].map(id => ({ id, username: id, name: id, enabled: true, credentialVersion: 1, password: verifier })) };
-  const roles = { version: 1, adminIds: ['minh'] }, membership = createMembershipDirectory(users, roles);
+  const roles = { version: 1, adminIds: ['minh'] };
+  let membership;
+  if (durableUsers) {
+    await fs.writeFile(path.join(root, 'users.json'), JSON.stringify(users), { mode: 0o600 });
+    await fs.writeFile(path.join(root, 'roles.json'), JSON.stringify(roles), { mode: 0o600 });
+    membership = await openMembershipManager(root, { rolesFile: path.join(root, 'roles.json') });
+  } else membership = createMembershipDirectory(users, roles);
   const store = await openHouseholdStore(root, { hook });
   await store.transact(0, () => privateIncome ? setSharing(fixture(), 'lan', 'lan', 'items', 'income', false) : fixture());
   const household = createHouseholdService({ store, membership });
   // Late binding the authenticated test-only port keeps origin checks real.
   let auth;
-  const server = createServer({ household, auth: { boundary: (...args) => auth.boundary(...args), login: (...args) => auth.login(...args), session: (...args) => auth.session(...args), logout: (...args) => auth.logout(...args) } });
+  const server = createServer({ household, administration: durableUsers ? membership : undefined, auth: { boundary: (...args) => auth.boundary(...args), login: (...args) => auth.login(...args), session: (...args) => auth.session(...args), logout: (...args) => auth.logout(...args) } });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
   assert.ok(![3080, 3081, 3443].includes(server.address().port));
   auth = await createAuth({ membership, origins: [base], secure: false });
-  t.after(async () => { await new Promise(resolve => server.close(resolve)); await store.close(); await fs.rm(root, { recursive: true, force: true }); });
-  async function login(username) {
-    const response = await fetch(base + '/api/login', { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
+  t.after(async () => { await new Promise(resolve => server.close(resolve)); await store.close(); await membership.close?.(); await fs.rm(root, { recursive: true, force: true }); });
+  async function login(username, credential = password) {
+    const response = await fetch(base + '/api/login', { method: 'POST', headers: { Origin: base, 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password: credential }) });
     assert.equal(response.status, 200);
     const value = await response.json(); assert.equal(value.member.id, username);
     return { Origin: base, Cookie: response.headers.get('set-cookie').split(';')[0], 'X-CSRF-Token': value.csrf, 'Content-Type': 'application/json' };
@@ -47,6 +54,48 @@ async function memberApp(t, { hook, privateIncome = false } = {}) {
   const change = (headers, command, expectedRevision = 1) => request(headers, '/api/records', { expectedRevision, command });
   return { store, root, membership, users, roles, login, request, change, household };
 }
+
+test('durable account HTTP APIs enforce roles, password/CSRF and revocation without touching finances', async t => {
+  const a = await memberApp(t, { durableUsers: true, privateIncome: true }), lan = await a.login('lan'), minh = await a.login('minh');
+  const finance = await fs.readFile(path.join(a.root, 'plan.json'));
+  const credentials = await fs.readFile(path.join(a.root, 'users.json'));
+  const create = { action: 'create', expectedRevision: 1, id: 'anh', username: 'anh', name: 'Synthetic C', password: 'Synthetic initial password' };
+  assert.equal((await a.request(lan, '/api/users')).status, 403);
+  assert.equal((await a.request(lan, '/api/users', create)).status, 403);
+  assert.equal((await a.request({ ...minh, 'X-CSRF-Token': '' }, '/api/users', create)).status, 403);
+  assert.equal((await a.request(minh, '/api/users', { ...create, admin: true })).status, 400);
+  assert.deepEqual(await fs.readFile(path.join(a.root, 'users.json')), credentials);
+  assert.equal((await a.request(minh, '/api/users', create)).status, 200);
+  const list = await (await a.request(minh, '/api/users')).json();
+  assert.equal(list.users.length, 3); assert.doesNotMatch(JSON.stringify(list), /password|salt|key|credentialVersion/);
+  const anh = await a.login('anh', create.password);
+  const own = await (await a.request(anh, '/api/member')).json();
+  assert.equal(own.revision, 2); assert.equal(own.member.id, 'anh'); assert.equal('users' in own, false);
+  assert.equal((await a.request(anh, '/api/password', { expectedRevision: 2, currentPassword: create.password, password: 'Synthetic changed password' })).status, 200);
+  assert.equal((await a.request(anh, '/api/plan')).status, 401);
+  const newAnh = await a.login('anh', 'Synthetic changed password');
+  assert.equal((await a.request(newAnh, '/api/plan')).status, 200);
+  assert.equal((await a.request(minh, '/api/users', { action: 'access', expectedRevision: 3, id: 'lan', enabled: false })).status, 200);
+  assert.equal((await a.request(lan, '/api/home')).status, 401);
+  assert.equal((await a.request(minh, '/api/users', { action: 'access', expectedRevision: 4, id: 'lan', enabled: true })).status, 200);
+  assert.equal((await a.request(await a.login('lan'), '/api/plan')).status, 200);
+  assert.deepEqual(await fs.readFile(path.join(a.root, 'plan.json')), finance);
+  for (const route of ['/users.json', '/roles.json', '/users.lock', '/membership-service.mjs']) assert.equal((await a.request(minh, route)).status, 404);
+  assert.equal((await a.request(minh, '/api/roles', { adminIds: ['anh'] })).status, 404);
+});
+
+test('durable password reset revokes an in-flight finance operation before rename', async t => {
+  let active = false, entered, release;
+  const gate = new Promise(resolve => { release = resolve; }), reached = new Promise(resolve => { entered = resolve; });
+  const a = await memberApp(t, { durableUsers: true, hook: async stage => { if (active && stage === 'before-rename') { entered(); await gate; } } });
+  const lan = await a.login('lan'), minh = await a.login('minh'); active = true;
+  const saving = a.change(lan, edit()); await reached;
+  try {
+    const reset = await a.request(minh, '/api/users', { action: 'reset', expectedRevision: 1, id: 'lan', password: 'Synthetic reset password' });
+    assert.equal(reset.status, 200);
+  } finally { release(); }
+  assert.equal((await saving).status, 401); assert.equal((await a.store.read()).revision, 1);
+});
 
 test('scoped HTTP reads/exports never include another private plan or unrelated metadata, even for admin', async t => {
   const a = await memberApp(t, { privateIncome: true }), lan = await a.login('lan'), minh = await a.login('minh');

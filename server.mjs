@@ -37,7 +37,7 @@ async function body(req, limit) {
   catch { throw error('invalid-json', 400); }
 }
 
-export function createServer({ store, household, auth, basePath = '' } = {}) {
+export function createServer({ store, household, administration, auth, basePath = '' } = {}) {
   validateBasePath(basePath);
   const escapedPrefix = basePath.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const server = http.createServer({ maxHeaderSize: 16_384 }, async (req, res) => {
@@ -70,6 +70,13 @@ export function createServer({ store, household, auth, basePath = '' } = {}) {
           if (!session.member) throw error('member-login-required', 401);
           // No query-supplied owner, scope, role or alternate export is accepted.
           if (new URL(req.url, 'http://localhost').search) throw error('invalid-query', 400);
+          if (administration && req.method === 'GET' && ['/api/member', '/api/users'].includes(pathname)) {
+            json(200, await administration[pathname === '/api/member' ? 'self' : 'list'](session.member)); return;
+          }
+          if (administration && req.method === 'POST' && ['/api/users', '/api/password'].includes(pathname)) {
+            const input = await body(req, 4096), actor = auth.session(req, true).member;
+            json(200, await administration[pathname === '/api/users' ? 'manage' : 'password'](actor, input)); return;
+          }
           const reads = { '/api/plan': 'individual', '/api/home': 'home' };
           const exports = { '/api/export': 'individual', '/api/home/export': 'home' };
           if (req.method === 'GET' && Object.hasOwn(reads, pathname)) {

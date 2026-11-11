@@ -6,7 +6,8 @@
 This is the living builder index for the r003 individual-plan/live-Home requirements.
 P1 adds isolated membership/schema primitives; P2a adds member-session revocation
 and a current-source shared-write reducer. P2b1 adds an explicitly injected scoped
-HTTP service and durable household transactions. The **production entry point and
+HTTP service and durable household transactions; P2b2 adds private durable user
+administration and explicit operator-role reload. The **production entry point and
 UI still use the existing single shared plan**; member mode is test-integrated only.
 Do not deploy this as privacy isolation or migrate real data on these checkpoints.
 
@@ -164,6 +165,55 @@ exactly the seven intended paths, no rename/binary/unrelated work. Read-only sea
 literal `api/` in the proxy module; it was not a product test failure. No mutation
 was replayed. Commit SHA is recorded on the ticket after commit.
 
+### P2b2 durable membership checkpoint — d-59c27f
+
+P2b1 commit: `5a6815d2335226323a5a3a2cc991e18406c51239`.
+
+- `membership-service.mjs`: pre-provisioned private `users.json`, separate private
+  operator `roles.json`, no seed/default/role API. Admin-only create/reset/access,
+  own-password verification/change, strict commands and expected revision. Last
+  enabled admin cannot be disabled. No member deletion or ownership/finance edits.
+- `persistence.mjs`: reuses atomic CAS writer for the original raw membership
+  document with a separate `users.lock`; credentials are never stored in finance.
+  Acknowledged credential updates install directory epochs only after fsync.
+  Post-rename uncertainty or unexpected source drift disables authentication and
+  dependent finance operations until restart/reconciliation; role reload cannot
+  clear uncertain credential state. Safe pre-rename failure preserves prior users.
+- Operator-only `reloadRoles()` rereads the private config and revokes changed
+  roles. Invalid roles fail closed until a valid reload; it is **not an HTTP role
+  or arbitrary-file endpoint**. Production startup/reload wiring is still pending.
+- Scoped server optionally injects this manager: GET `/api/member` returns only own
+  identity+membership revision; GET/POST `/api/users` is admin-only; POST
+  `/api/password` verifies current password and revokes old sessions. Origin/CSRF,
+  4,096-byte account request cap and post-body identity checks apply. Responses
+  omit verifiers, credentials and foreign finances. No user deletion/promotion.
+- Synthetic tests cover restarts, concurrent admin CAS, no-default bootstrap,
+  enabled-admin invariant, password resets, disable/reactivation without finance
+  changes, explicit role reload, all five persistence faults and process-kill
+  old/new files with stale-lock refusal. Real HTTP reset revokes a pending finance
+  write before rename. Production entry point remains legacy: no deployment claim.
+
+Original RED `op-c46b9d56-6279-4454-9244-bd28e88736b4`: absent new manager module,
+57 pass/1 failure. Core rerun `op-ffc23b58-bcd5-4724-9899-69f584e8e755`: 71/71.
+HTTP tests then failed as expected (`op-d4a8f3fb-76e2-410a-9d24-50e2f38028ac`):
+71 pass/2 failures, admin routes returned 404 before wiring. HTTP implementation
+rerun `op-1f2857d3-f3b4-4945-a3ea-6149b4cf42de`: 73/73. No failed tests were removed.
+Process-kill tests were added afterward. Final ordered checks all exited 0, with
+no skips and native completed/allowed/available/settled-cleanup results:
+
+| Order | Command | Result | Operation |
+|---|---|---|---|
+| 1 | `node --test test/auth.test.mjs test/membership.test.mjs test/persistence.test.mjs test/server.test.mjs test/sharing.test.mjs` | 75/75 | `op-5f55fe89-bbb1-4fc4-8639-ebafcc625548` |
+| 2 | `npm run check` | pass | `op-ddbdd61e-50e7-4f7e-8c7e-89dab0963a7e` |
+| 3 | `node --test test/home.test.mjs test/model.test.mjs test/base-path.test.mjs test/prefix-proxy.test.mjs` | 23/23 | `op-6b98151c-c17b-4a37-b6e3-4efa5e5a1df5` |
+
+`git diff --check` passed. Complete JSON-encoded NUL-safe status inventory showed
+only the seven planned text paths, no renames/binaries/unrelated work. Commit SHA
+is recorded on the ticket after commit. These are focused checks, not a self-run
+requirements matrix or acceptance.
+
+This checkpoint addresses FR1–3/11 and Must NFR1/4/5, not full AC acceptance.
+
 ## 5. Findings and admission limits
 
 Read-only `ppa decision verify` returned `WORKFLOW_SOURCE` at `admitted-run`
@@ -187,11 +237,10 @@ and UI integration are separately tested. Existing persisted records were not co
 
 ## 7. Remaining dependency-ordered work
 
-1. P2b2: durable private user management and operator-role reload. Wire the P2a
-   directory only after acknowledged durable updates, fail closed on uncertain
-   credential state; no in-app roles or member deletion. P2b1 scoped household
-   persistence/HTTP is present but production startup remains legacy. Renew all
-   five-file P2 checks plus focused prefix/home/model/syntax checks after changes.
+1. Production member-mode startup/bootstrap/reload composition remains pending;
+   scoped household and durable membership are currently explicit injected services.
+   Keep legacy safe until migration and UI flows are complete. New API paths must
+   enter the browser's exact prefix-aware allowlist during P4, never a broad bypass.
 2. P3: common period administration, current member validation, explicit enabled
    migration owner with exact original archive, own-only import/reset and full
    pooled finance/history/tag compatibility. No automatic conversion.
@@ -210,10 +259,23 @@ validators to accept credentials/roles. Scope supporting metadata down to values
 not merely whole tag keys. Never validate a pooled Home using one individual's
 500-record cap. Pure-model privacy tests are necessary but cannot prove server
 identity, transactional authorization, session revocation or actual live refresh.
-Resume from accepted local checkpoints at **P2b2**, not a replay of the resolved requirements
+Resume from accepted local checkpoints at **P3 plus startup composition**, not a replay of the resolved requirements
 baseline mismatch. This XL implementation is intentionally checkpointed before the
 next security-critical storage/API integration; it is not ready for UAT or release.
 The remaining required phases are unfinished, not skipped-and-passing.
+
+P2b session learning: a finance uncertain-write response can offer scoped reread,
+whereas uncertain credential durability must disable the **identity provider**,
+not merely its admin write endpoint; otherwise old passwords/sessions could keep
+accessing finances after a reset may already have reached disk. Tests exercise
+that cross-service boundary as well as revocation during a pending finance rename.
+
+Session reflection (`team`): checkpoint plans should separate durable backend
+integration from operator startup/migration and browser completion explicitly.
+Why: passing injected-service tests is easily mistaken for a runnable privacy
+feature. Correction: every phase handoff should name the actual production entry
+point and remaining activation path, and keep backend/browser/human acceptance
+separate. Current startup is unchanged and multi-user UI is absent.
 
 Self-improvement (`infra`/`skill`): the workflow-only decision verifier gives an
 unhelpful WORKFLOW_SOURCE for document-package IDs. Route those IDs to an explicit
