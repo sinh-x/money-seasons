@@ -2,6 +2,7 @@ import { MAX_BYTES, blankPlan, demoPlan, validatePlan, forecast, monthRange, occ
 import { parseAmount, formatAmountInput } from './amount-input.js';
 import { tagLibrary, groupExpenses, uniqueTagName, removeTagDefinition } from './expense-tags.js';
 import { validateBasePath, apiPath } from './base-path.js';
+import { ownerPlan, recordDiff, memberDialogs } from './member-ui.js';
 const basePath = validateBasePath(document.documentElement.getAttribute('data-base-path') ?? '');
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const h = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -10,12 +11,14 @@ const label = month => `${month.slice(5)} / ${month.slice(0, 4)}`;
 const TYPES = { person: ['♙', 'Cá nhân'], group: ['♧', 'Nhóm'], category: ['▦', 'Danh mục'] };
 const TITLES = { calendar: 'Lịch tài chính', expense: 'Rõ chi', income: 'Đa thu', accounts: 'Tài khoản & số dư', debts: 'Công nợ' };
 const KEY = 'money-seasons.plan.v1';
+const memberMode = document.documentElement.dataset.authMode === 'members';
+let member = null, scope = 'individual', memberView = null, stale = false, editContext = null, polling = false;
 let plan = blankPlan(), revision = 0, initialized = false, csrf = '', serverLegacy = null;
 let view = 'calendar', selectedMonth = plan.startMonth, table = innerWidth > 760, tentative = false;
 let pending = null, busy = false, confirmAction, submitEditor, migration = null, focusSource, toastTimer;
 const range = () => monthRange(plan.startMonth, plan.endMonth);
 const results = () => forecast(plan, tentative);
-const blocked = () => busy || !!pending || !!serverLegacy;
+const blocked = () => busy || !!pending || !!serverLegacy || (memberMode && (stale || !!memberView?.migrationRequired));
 // Ephemeral view state only: never included in plan saves/exports or API writes.
 const collapsed = new Set();
 // Longer than the model's 80-character ID limit: cannot alias imported IDs.
@@ -51,10 +54,15 @@ function toggleCollapse(target) {
 function toast(message) { clearTimeout(toastTimer); $('#toast').textContent = message; $('#toast').hidden = false; toastTimer = setTimeout(() => { $('#toast').hidden = true; }, 5000); }
 function warning(message) { $('#storage-warning').textContent = message; $('#storage-warning').hidden = !message; }
 function authenticated(value) { $('#access-panel').hidden = value; $('#application').hidden = !value; if (!value) $$('dialog[open]').forEach(d => d.close()); }
+function clearMember() {
+  member = null; csrf = ''; pending = null; editContext = null; memberView = null; plan = blankPlan(); revision = 0; initialized = false; scope = 'individual'; stale = true;
+  submitEditor = null; confirmAction = null; migration = null; serverLegacy = null; expenseSearch = ''; expenseGroups = ['object', '', '']; collapsed.clear(); showExpenseAmounts = false;
+  authenticated(false); $('#editor').innerHTML = ''; $('#workspace').innerHTML = ''; $('#member-name').textContent = ''; $('#storage-warning').textContent = ''; $('#toast').hidden = true;
+}
 async function api(url, options = {}) {
   const response = await fetch(apiPath(basePath, url), { ...options, headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf, ...options.headers } });
   const result = await response.json();
-  if (!response.ok) { if (response.status === 401) authenticated(false); throw Object.assign(new Error(result.error || 'request-failed'), { status: response.status }); }
+  if (!response.ok) { if (response.status === 401) { if (memberMode) clearMember(); else authenticated(false); } throw Object.assign(new Error(result.error || 'request-failed'), { status: response.status }); }
   return result;
 }
 function download(raw, filename) {
@@ -65,6 +73,17 @@ function confirmChange(title, message, action) {
   $('#confirm-title').textContent = title; $('#confirm-message').textContent = message; confirmAction = action; $('#confirm-dialog').showModal();
 }
 async function load() {
+  if (memberMode) {
+    const saved = await api(scope === 'home' ? '/api/home' : '/api/plan');
+    if (saved.durabilityUncertain) { stale = true; throw new Error('Độ bền chưa rõ; cần người vận hành kiểm tra / khởi động lại.'); }
+    memberView = saved; plan = saved.plan ?? blankPlan(); revision = saved.revision; initialized = !!saved.plan; stale = false; pending = null; editContext = null;
+    $('#member-bar').hidden = false; $('#member-name').textContent = `${member?.name ?? ''} · ${scope === 'home' ? 'Home · Chia sẻ' : 'Của tôi'}`;
+    $('#my-button').setAttribute('aria-pressed', scope === 'individual'); $('#home-button').setAttribute('aria-pressed', scope === 'home');
+    $('#users-button').hidden = !member?.admin; $('#period-button').hidden = !member?.admin; $('#migration-button').hidden = !member?.admin || !saved.migrationRequired;
+    $('#import-button').hidden = scope === 'home'; $('#settings-button').hidden = scope === 'home';
+    warning(saved.migrationRequired ? 'Nguyên bản chưa chuyển. Admin phải xem trước và chọn rõ một cá nhân sở hữu. Chưa có dữ liệu Home hoạt động.' : '');
+    render(); return;
+  }
   const saved = await api('/api/plan');
   if (saved.durabilityUncertain) throw new Error('Độ bền tệp chưa rõ; cần người vận hành kiểm tra.');
   serverLegacy = saved.migrationRequired ? saved.plan : null;
@@ -73,6 +92,7 @@ async function load() {
   warning(serverLegacy ? 'Máy chủ còn nguyên bản v1/v2. Chưa chuyển dữ liệu: xuất nguyên bản, xem ánh xạ và xác nhận trước. Kế hoạch trống dưới đây KHÔNG thay thế bản cũ.' : !initialized ? 'Máy chủ chưa có kế hoạch. Lưu thao tác đầu tiên sẽ khởi tạo; không tự lưu dữ liệu mẫu. Chưa có số dư là chưa biết.' : '');
 }
 async function commit(candidate, operation = 'edit', migrationConfirmed = false) {
+  if (memberMode) return commitMember(candidate, operation);
   if (busy || pending || (serverLegacy && !migrationConfirmed)) { toast('Hãy giải quyết bản chưa lưu hoặc chuyển nguyên bản trước.'); return false; }
   const valid = validatePlan(candidate);
   const draft = { candidate: valid, revision, operation: initialized ? operation : 'replace', migrationConfirmed, checked: false };
@@ -90,18 +110,23 @@ async function commit(candidate, operation = 'edit', migrationConfirmed = false)
   } finally { busy = false; render(); }
 }
 function renderStatus() {
+  if (memberMode) $('#freshness').textContent = stale ? 'MẤT KẾT NỐI / DỮ LIỆU CŨ · Chặn sửa' : '';
   $('#save-status').textContent = pending ? `CHƯA LƯU · dựa trên phiên bản ${pending.revision}` : busy ? 'Đang lưu… chưa đóng trang.' : initialized ? `Đã lưu · phiên bản ${revision}${serverLegacy ? ' · nguyên bản chưa chuyển' : ''}` : 'Chưa khởi tạo kế hoạch máy chủ';
   $('#save-recovery').hidden = !pending; $('#retry-button').hidden = !pending?.checked;
-  $('#legacy-button').hidden = !serverLegacy && !hasBrowserLegacy();
+  $('#legacy-button').hidden = memberMode || (!serverLegacy && !hasBrowserLegacy());
   $$('[data-mutate], #settings-button').forEach(e => { e.disabled = blocked(); });
-  $$('#editor input, #editor select, #editor textarea, #editor button[type=submit]').forEach(e => { e.disabled = busy || !!pending || e.hasAttribute('data-locked') || e.hasAttribute('data-inactive') || (e.name === 'ack' && !migration?.downloaded); });
+  $$('#editor input, #editor select, #editor textarea, #editor button[type=submit]').forEach(e => { e.disabled = busy || !!pending || (memberMode && stale) || e.hasAttribute('data-locked') || e.hasAttribute('data-inactive') || (e.name === 'ack' && !migration?.downloaded); });
   if (pending && $('#editor').open && $('#form-error')) { $('#form-error').hidden = false; $('#form-error').textContent = 'CHƯA LƯU. Dữ liệu biểu mẫu được giữ; đóng biểu mẫu để xuất bản sửa và đọc lại trạng thái.'; }
 }
 function hasBrowserLegacy() { try { return !!localStorage.getItem(KEY); } catch { return false; } }
 const button = (text, action, attrs = '', klass = '') => `<button class="button ${klass}" data-action="${action}" ${attrs}>${text}</button>`;
 const stat = (title, value, note, klass = '') => `<article class="stat ${klass}"><span class="stat-label">${h(title)}</span><strong class="stat-value${String(value).length > 16 ? ' long-value' : ''}">${h(value)}</strong><small>${h(note)}</small></article>`;
 const objectName = id => plan.objects.find(o => o.id === id)?.name ?? '';
-const objectLabel = o => `${TYPES[o.type][0]} ${TYPES[o.type][1]} · ${o.name} [${o.id.slice(-8)}]`;
+function objectLabel(o, includeId = false) {
+  const matches = plan.objects.filter(other => other.name === o.name && other.type === o.type);
+  const duplicate = matches.length > 1 ? ` (${matches.findIndex(other => other.id === o.id) + 1})` : '';
+  return `${TYPES[o.type][0]} ${TYPES[o.type][1]} · ${o.name}${includeId ? ` [${o.id}]` : duplicate}`;
+}
 function monthOptions(value) { return range().map(m => `<option value="${m}" ${m === value ? 'selected' : ''}>${label(m)}</option>`).join(''); }
 function controls() {
   return `<div class="controls"><label class="toggle"><input type="checkbox" id="include-tentative" ${tentative ? 'checked' : ''}>Tính cả khoản đang cân nhắc</label><label>Tháng xem <select class="select" id="view-month">${monthOptions(selectedMonth)}</select></label>${collapseTools()}</div>`;
@@ -114,10 +139,25 @@ function render() {
   expenseGroups = expenseGroups.map(d => dimensions.has(d) ? d : '');
   $('#workspace').innerHTML = view === 'calendar' ? calendarPage() : ['income', 'expense'].includes(view) ? itemPage(view) : accountsPage(view === 'debts');
   renderStatus();
+  if (memberMode) {
+    $$('[data-action=object], [data-action=delete-object], [data-action=tags]').forEach(e => { if (scope === 'home') e.disabled = true; });
+    $$('[data-action=item], [data-action=account], [data-action=snapshot], [data-action=delete-item]').filter(e => e.dataset.id).forEach(e => {
+      const kind = ['item', 'delete-item'].includes(e.dataset.action) ? 'items' : e.dataset.debt === 'true' ? 'debtAccounts' : 'accounts';
+      const source = scope === 'home' ? memberView?.provenance.find(p => p.kind === kind && p.id === e.dataset.id) : { ownerId: member.id, sourceId: e.dataset.id };
+      if (!source || e.previousElementSibling?.classList.contains('owner-label')) return;
+      const shared = scope === 'home' || memberView.sharing?.[kind]?.find(p => p.id === source.sourceId)?.shared;
+      const name = memberView.owners?.find(o => o.id === source.ownerId)?.name ?? member?.name;
+      const homeCalendar = scope === 'home' && view === 'calendar';
+      const badge = document.createElement('span'); badge.className = 'owner-label'; badge.textContent = `${name}${homeCalendar ? '' : ` · ${shared ? 'Chia sẻ' : 'Riêng tư'}`}`; e.before(badge);
+      if (!homeCalendar && source.ownerId === member.id && e.dataset.action !== 'snapshot') {
+        const privacy = document.createElement('button'); privacy.className = 'button small'; privacy.dataset.privacy = source.sourceId; privacy.dataset.kind = kind; privacy.textContent = shared ? 'Giữ riêng' : 'Chia sẻ'; privacy.disabled = blocked(); badge.append(privacy);
+      }
+    });
+  }
 }
 function renderAndFocus(selector) { render(); $(selector)?.focus({ preventScroll: true }); }
 function heading(title, description, actions = '') {
-  return `<header class="page-heading"><div><div class="eyebrow">CÙNG HIỂU · CÙNG LÊN KẾ HOẠCH</div><h1>${h(title)}</h1><p>${h(description)}</p></div><div class="heading-actions">${actions}</div></header>`;
+  return `<header class="page-heading"><div><div class="eyebrow">CÙNG HIỂU · CÙNG LÊN KẾ HOẠCH</div><h1>${h(title)}</h1>${description ? `<p>${h(description)}</p>` : ''}</div><div class="heading-actions">${actions}</div></header>`;
 }
 const sumItems = (items, month) => items.filter(i => occurs(i, month) && (i.status === 'confirmed' || tentative)).reduce((out, i) => {
   const value = plannedAmount(i, month); if (value === null) out.missing++; else out.known += value; return out;
@@ -140,7 +180,7 @@ function expensePage() {
     const key = expenseGroupKey(g), details = `expense-group-${indexPath}`, object = g.dimension === 'object' ? plan.objects.find(o => o.id === g.value) : null;
     const inherited = g.path.find(([dimension]) => dimension === 'object')?.[1], children = g.children.filter(child => child.items.length);
     const attrs = `data-kind="expense" ${inherited ? `data-object="${h(inherited)}"` : ''} ${g.dimension === 'type' ? `data-repeat-kind="${g.value}"` : ''} data-mutate`;
-    return `<article class="expense-group ${object ? 'object-card collapsible-object' : 'panel'}" ${object ? `data-object="${h(object.id)}"` : ''}><header class="object-header"><div class="object-identity">${object ? `<span class="object-icon ${object.type}" aria-hidden="true">${TYPES[object.type][0]}</span>` : ''}<div><h2 class="${object ? 'object-title' : 'expense-group-title'}">${collapseButton(key, g.label, details)}</h2><small>${object ? `${TYPES[object.type][1]} · Mã ${h(object.id.slice(-8))} · ` : ''}${g.items.length} khoản</small></div></div><div class="object-total">${expenseMoney(`<strong>${h(sumText(sumItems(g.items, selectedMonth)))}</strong>`)}<small>Dự kiến ${label(selectedMonth)}</small></div></header><div id="${details}" ${hiddenGroup(key)}>${object ? `<div class="object-management">${button('Đổi tên / loại', 'object', `data-id="${h(object.id)}" data-mutate`, 'text small')}${button('Xóa đối tượng', 'delete-object', `data-id="${h(object.id)}" data-mutate`, 'text small danger')}</div>` : ''}${children.length ? `<div class="expense-children">${children.map((child, n) => branch(child, `${indexPath}-${n}`)).join('')}</div>` : g.items.map(item => expenseRow(item, library)).join('') || '<p class="empty">Chưa có khoản chi phù hợp.</p>'}<footer class="object-footer">${button('＋ Thêm chi tiết chi', 'item', attrs, 'text')}</footer></div></article>`;
+    return `<article class="expense-group ${object ? 'object-card collapsible-object' : 'panel'}" ${object ? `data-object="${h(object.id)}"` : ''}><header class="object-header"><div class="object-identity">${object ? `<span class="object-icon ${object.type}" aria-hidden="true">${TYPES[object.type][0]}</span>` : ''}<div><h2 class="${object ? 'object-title' : 'expense-group-title'}">${collapseButton(key, g.label, details)}</h2><small>${object ? `${TYPES[object.type][1]} · ` : ''}${g.items.length} khoản</small></div></div><div class="object-total">${expenseMoney(`<strong>${h(sumText(sumItems(g.items, selectedMonth)))}</strong>`)}<small>Dự kiến ${label(selectedMonth)}</small></div></header><div id="${details}" ${hiddenGroup(key)}>${object ? `<div class="object-management">${button('Đổi tên / loại', 'object', `data-id="${h(object.id)}" data-mutate`, 'text small')}${button('Xóa đối tượng', 'delete-object', `data-id="${h(object.id)}" data-mutate`, 'text small danger')}</div>` : ''}${children.length ? `<div class="expense-children">${children.map((child, n) => branch(child, `${indexPath}-${n}`)).join('')}</div>` : g.items.map(item => expenseRow(item, library)).join('') || '<p class="empty">Chưa có khoản chi phù hợp.</p>'}<footer class="object-footer">${button('＋ Thêm chi tiết chi', 'item', attrs, 'text')}</footer></div></article>`;
   };
   return heading(TITLES.expense, 'Bắt đầu từ ai, cho việc gì. Tự chọn tối đa ba mức nhóm. Chưa biết số tiền vẫn có thể lên kế hoạch.', button('⚑ Quản lý thẻ', 'tags', 'data-mutate') + button('＋ Tạo đối tượng', 'object', 'data-mutate') + button('＋ Thêm khoản chi', 'item', 'data-kind="expense" data-mutate', 'primary')) + context +
     `<div class="summary-grid">${stat('Khoản trong tháng', current.length, 'Các lần thuộc tháng đang xem.', 'highlight')}${stat('Đối tượng', plan.objects.length, 'Dùng chung hai trang thu / chi.')}${stat('Lịch đã lưu', items.length, 'Kể cả ngoài tháng đang xem.')}<article class="stat"><span class="stat-label">Dự kiến chi · ${label(selectedMonth)}</span>${expenseMoney(`<strong class="stat-value long-value">${h(sumText(sumItems(items, selectedMonth)))}</strong>`)}</article></div>` +
@@ -159,7 +199,7 @@ function itemPage(kind) {
     `<div class="summary-grid">${stat(`Dự kiến ${expense ? 'chi' : 'thu'} · ${label(selectedMonth)}`, sumText(sumItems(items, selectedMonth)), 'Chỉ tính những lần thuộc tháng đang xem.', 'highlight')}${stat('Đối tượng hiển thị', objects.length, expense ? 'Kể cả đối tượng trống.' : 'Có khoản thu là hiển thị.')}${stat('Khoản đã lên kế hoạch', items.length, 'Không ghi số thực tế.')}${stat('Đầu vào số tiền', 'Mặc định × 1.000', '5 = 5.000 ₫ · 5tr = 5.000.000 ₫')}</div>` + controls() +
     `<div class="steps"><span>1 · Tạo / chọn đối tượng</span><span>→ 2 · Mục đích</span><span>→ 3 · Chi tiết & lịch</span><span>→ 4 · Tiền nhập sau</span></div><section class="object-grid" aria-label="Danh sách đối tượng">${objects.map((o, index) => {
       const rows = items.filter(i => i.objectId === o.id), key = `object:${kind}:${o.id}`, detailsId = `object-${kind}-${index}-details`;
-      return `<article class="object-card collapsible-object" data-object="${h(o.id)}"><header class="object-header"><div class="object-identity"><span class="object-icon ${o.type}" aria-hidden="true">${TYPES[o.type][0]}</span><div><h2 class="object-title">${collapseButton(key, o.name, detailsId)}</h2><small>${TYPES[o.type][1]} · Mã ${h(o.id.slice(-8))} · ${rows.length} khoản · dùng chung hai trang</small></div></div><div class="object-total"><strong>${h(sumText(sumItems(rows, selectedMonth)))}</strong><small>Dự kiến ${label(selectedMonth)}</small></div></header>
+      return `<article class="object-card collapsible-object" data-object="${h(o.id)}"><header class="object-header"><div class="object-identity"><span class="object-icon ${o.type}" aria-hidden="true">${TYPES[o.type][0]}</span><div><h2 class="object-title">${collapseButton(key, o.name, detailsId)}</h2><small>${TYPES[o.type][1]} · ${rows.length} khoản · dùng chung hai trang</small></div></div><div class="object-total"><strong>${h(sumText(sumItems(rows, selectedMonth)))}</strong><small>Dự kiến ${label(selectedMonth)}</small></div></header>
       <div id="${detailsId}" ${hiddenGroup(key)}><div class="object-management">${button('Đổi tên / loại', 'object', `data-id="${h(o.id)}" data-mutate`, 'text small')}${button('Xóa đối tượng', 'delete-object', `data-id="${h(o.id)}" data-mutate`, 'text small danger')}</div>
       ${rows.length ? `<div class="object-rows">${rows.map(i => {
         const month = estimateMonth(i, selectedMonth);
@@ -171,7 +211,7 @@ function itemPage(kind) {
 }
 function calendarPage() {
   const data = results(), selected = data.find(m => m.month === selectedMonth);
-  return heading(TITLES.calendar, 'Số dư tài khoản + kế hoạch thu chi. Một dòng thời gian liên tục, không đặt lại khi sang năm.', button('＋ Khoản thu', 'item', 'data-kind="income" data-mutate') + button('＋ Khoản chi', 'item', 'data-kind="expense" data-mutate', 'primary')) +
+  return heading(TITLES.calendar, '', button('＋ Khoản thu', 'item', 'data-kind="income" data-mutate') + button('＋ Khoản chi', 'item', 'data-kind="expense" data-mutate', 'primary')) +
     `<div class="summary-grid">${stat(`Đầu tháng ${label(selectedMonth)}`, money(selected.opening), selected.openingIncomplete ? 'Phần đã biết · chưa đủ dữ liệu' : selected.reset ? 'Mốc số dư tài khoản, không phải thu.' : 'Chuyển từ cuối tháng trước.')}${stat('Thu dự kiến', flowText(selected, 'income'), 'Không phải thu nhập thực nhận.')}${stat('Chi dự kiến', flowText(selected, 'expense'), selected.expenseMissing ? `${selected.expenseMissing} khoản chưa biết số tiền.` : 'Toàn bộ kế hoạch tháng.')}${stat('Cuối tháng dự kiến', money(selected.closing), selected.incomplete ? 'Phần đã biết · chưa đủ dữ liệu' : selected.closing < 0 ? 'Số dư âm' : 'Ước tính theo tháng', selected.closing < 0 ? 'negative' : 'highlight')}</div>
     <p class="info amber">Mỗi tháng có số dư mới sẽ đặt lại mốc gộp từ số dư gần nhất của từng tài khoản, kể cả ngày cũ. Vẫn tính toàn bộ kế hoạch tháng cập nhật; có thể trùng với chi tiêu đã nằm trong số dư. Đây là ước tính, không phải đối soát giao dịch.</p>${controls()}
     <div class="controls"><h2>${data.length} tháng · ${label(plan.startMonth)} → ${label(plan.endMonth)}</h2><div class="segmented" role="group" aria-label="Kiểu hiển thị">${button('Bảng chi tiết', 'table', `aria-pressed="${table}"`)}${button('Thẻ tháng', 'cards', `aria-pressed="${!table}"`)}</div></div>${table ? forecastTable(data) : forecastCards(data)}`;
@@ -235,7 +275,7 @@ async function saveAndClose(next, operation = 'edit', migrated = false) { if (aw
 function objectDialog(id) {
   const object = plan.objects.find(o => o.id === id);
   openEditor(object ? 'Đổi đối tượng dùng chung' : 'Tạo một đối tượng', 'Loại chỉ đổi biểu tượng, không thay phép tính hoặc quyền truy cập.',
-    field('Tên hiển thị', `<input name="name" maxlength="80" required value="${h(object?.name)}">`, 'Tên trùng không tự gộp; dùng mã để phân biệt.', true) + field('Loại', `<select name="objectType">${Object.entries(TYPES).map(([key, [icon, text]]) => `<option value="${key}" ${key === object?.type ? 'selected' : ''}>${icon} ${text}</option>`).join('')}</select>`, '', true),
+    field('Tên hiển thị', `<input name="name" maxlength="80" required value="${h(object?.name)}">`, 'Các đối tượng trùng tên vẫn được giữ riêng, không tự gộp.', true) + field('Loại', `<select name="objectType">${Object.entries(TYPES).map(([key, [icon, text]]) => `<option value="${key}" ${key === object?.type ? 'selected' : ''}>${icon} ${text}</option>`).join('')}</select>`, '', true),
     async f => { const next = structuredClone(plan), value = { id: id || crypto.randomUUID(), name: f.name.value, type: f.objectType.value }; if (object) next.objects[next.objects.findIndex(o => o.id === id)] = value; else next.objects.push(value); await saveAndClose(next); });
 }
 function tagRow(tag = {}) {
@@ -283,7 +323,8 @@ function itemDialog({ id, kind = 'expense', objectId, month = selectedMonth, sug
   const item = plan.items.find(i => i.id === id); if (item) kind = item.type;
   const expense = kind === 'expense', effective = item ? estimateMonth(item, month) : month;
   const r = item?.recurrence ?? { kind: repeatKind, anchor: month, end: repeatKind === 'once' ? month : plan.endMonth, everyMonths: 1 };
-  openEditor(`${item ? 'Chỉnh' : 'Thêm'} khoản ${expense ? 'chi' : 'thu'}`, 'Chọn đối tượng → mục đích → chi tiết & lịch → số tiền sau. Không ghi thực tế.',
+  openEditor(`${item ? 'Chỉnh' : 'Thêm'} khoản ${expense ? 'chi' : 'thu'}`, memberMode ? 'Bản ghi mới thuộc CỦA TÔI và mặc định CHIA SẺ. Chủ sở hữu có thể Giữ riêng sau lưu; khoản chia sẻ chỉ đổi sau xác nhận.' : 'Chọn đối tượng → mục đích → chi tiết & lịch → số tiền sau. Không ghi thực tế.',
+    (memberMode && !item ? field('Quyền riêng tư khi tạo', '<select name="shared"><option value="true">Chia sẻ với Home (mặc định)</option><option value="false">Riêng tư · chỉ tôi</option></select>', '', true) : '') +
     (expense ? `<div class="field full">${amountSwitch()}</div>` : '') +
     field('Đối tượng dùng chung', `<select name="objectId">${plan.objects.map(o => `<option value="${h(o.id)}" ${o.id === (item?.objectId ?? objectId) ? 'selected' : ''}>${h(objectLabel(o))}</option>`).join('')}</select>`, '', true) +
     field('Tên khoản / mục đích', `<input name="name" required maxlength="100" value="${h(item?.name ?? suggestion)}">`, '', true) +
@@ -363,7 +404,8 @@ async function deleteManagedTag(value = false) {
 }
 function accountDialog(id, debt = false) {
   const source = debt ? plan.debtAccounts : plan.accounts, account = source.find(a => a.id === id);
-  openEditor(account ? 'Đổi tên tài khoản' : debt ? 'Tạo tài khoản công nợ' : 'Thêm tài khoản tiền', 'Tài khoản không phải người đăng nhập. Lịch sử số dư được giữ; không có xóa tài khoản có lịch sử.',
+  openEditor(account ? 'Đổi tên tài khoản' : debt ? 'Tạo tài khoản công nợ' : 'Thêm tài khoản tiền', memberMode ? 'Tài khoản mới thuộc CỦA TÔI, mặc định CHIA SẺ cả lịch sử. Chỉ chủ sở hữu điều khiển riêng tư; không xóa tài khoản có lịch sử.' : 'Tài khoản không phải người đăng nhập. Lịch sử số dư được giữ; không có xóa tài khoản có lịch sử.',
+    (memberMode && !account ? field('Quyền riêng tư khi tạo', '<select name="shared"><option value="true">Chia sẻ với Home (mặc định)</option><option value="false">Riêng tư · chỉ tôi</option></select>', '', true) : '') +
     field('Tên tài khoản', `<input name="name" required maxlength="80" value="${h(account?.name)}">`, '', true) + (debt ? field('Hướng công nợ', `<select name="direction" ${account ? 'disabled data-locked' : ''}><option value="payable">Mình nợ</option><option value="receivable" ${account?.direction === 'receivable' ? 'selected' : ''}>Người khác nợ mình</option></select>`, 'Không bù trừ vào số dư tiền.', true) : ''),
     async f => { const next = structuredClone(plan), list = debt ? next.debtAccounts : next.accounts, value = { id: id || crypto.randomUUID(), name: f.name.value, ...(debt ? { direction: account?.direction ?? f.direction.value } : {}) }; if (account) list[list.findIndex(a => a.id === id)] = value; else list.push(value); await saveAndClose(next); });
 }
@@ -402,14 +444,14 @@ function prepareMigration(raw, fromServer = false) {
   const source = JSON.parse(raw), next = convertLegacy(source, { confirmed: true });
   migration = { raw, next, fromServer, downloaded: false };
   openEditor('Chuyển nguyên bản v1/v2', 'Không tự chuyển, không dùng lại số thực tế hay tự tạo số dư tài khoản.',
-    `<div class="field full"><p>Giữ năm-tháng ${label(next.startMonth)}–${label(next.endMonth)}, ${next.items.length} kế hoạch. Số thực tế và tiền đầu kỳ cũ chỉ nằm trong nguyên bản; KHÔNG tham gia dự báo mới. Số dư mới là chưa biết cho đến khi nhập mốc có ngày.</p><h3>Ánh xạ đối tượng (xem mã để phân biệt)</h3><ul>${next.objects.map(o => `<li>${h(objectLabel(o))} → ${h(next.items.find(i => i.objectId === o.id)?.name)}</li>`).join('')}</ul>${button('Tải nguyên bản trước ↓', 'download-original', 'type="button"')}<label class="toggle"><input name="ack" type="checkbox" required disabled>Tôi đã lưu nguyên bản; đồng ý bỏ số thực tế khỏi kế hoạch hoạt động và dùng ánh xạ trên.</label><p>Khóa trình duyệt không bị xóa. Với bản máy chủ cũ, máy chủ cũng lưu nguyên bản riêng trước khi thay.</p></div>`,
+    `<div class="field full"><p>Giữ năm-tháng ${label(next.startMonth)}–${label(next.endMonth)}, ${next.items.length} kế hoạch. Số thực tế và tiền đầu kỳ cũ chỉ nằm trong nguyên bản; KHÔNG tham gia dự báo mới. Số dư mới là chưa biết cho đến khi nhập mốc có ngày.</p><h3>Ánh xạ đối tượng (xem mã để phân biệt)</h3><ul>${next.objects.map(o => `<li>${h(objectLabel(o, true))} → ${h(next.items.find(i => i.objectId === o.id)?.name)}</li>`).join('')}</ul>${button('Tải nguyên bản trước ↓', 'download-original', 'type="button"')}<label class="toggle"><input name="ack" type="checkbox" required disabled>Tôi đã lưu nguyên bản; đồng ý bỏ số thực tế khỏi kế hoạch hoạt động và dùng ánh xạ trên.</label><p>Khóa trình duyệt không bị xóa. Với bản máy chủ cũ, máy chủ cũng lưu nguyên bản riêng trước khi thay.</p></div>`,
     async () => { if (!migration.downloaded) throw new Error('Tải nguyên bản trước khi xác nhận.'); confirmChange('Thay kế hoạch bằng bản chuyển?', 'Hãy giữ nguyên bản xuất ở nơi an toàn. Việc chuyển chỉ giữ kế hoạch, năm-tháng, mã và các mốc ước tính; không chuyển thực tế hoặc suy đoán số dư tiền.', () => saveAndClose(migration.next, 'replace', !!serverLegacy)); }, 'Xem trước chuyển');
 }
 function helpDialog() {
-  openEditor('Hướng dẫn & khôi phục', 'Ước tính theo tháng, không phải kế toán.', `<div class="field full"><h3>Rõ chi: tháng, nhóm và thẻ</h3><p>Danh sách mặc định chỉ gồm khoản thuộc tháng đang xem. Dùng Xem tất cả lịch đã lưu để sửa khoản ngoài tháng. Ba mức nhóm chọn Đối tượng / người hoặc khóa thẻ khác nhau; Lặp lại / Một lần luôn trong cùng. Thiếu khóa đang nhóm sẽ vào Khác, không tự gán thẻ. Khoản mới bắt đầu không có thẻ; Thêm thẻ để chọn hoặc tạo khóa / giá trị. Gỡ thẻ chỉ bỏ gán; định nghĩa đang dùng không thể xóa. Khóa mới trong biểu mẫu chỉ lưu cùng khoản chi hợp lệ.</p><p>Công tắc Ẩn/Hiện số tiền cụ thể mặc định tắt cho trang và biểu mẫu khoản chi; bật để xem / nhập tiền. Tắt không xóa tiền đã nhập hay lịch sử và không phải kiểm soát quyền truy cập. Tháng, nhóm, tìm kiếm, mở/thu gọn và công tắc chỉ đổi góc nhìn, không lưu vào JSON.</p><h3>Số tiền và số dư</h3><p>Số trống là chưa biết; 0 là đã biết. Nhập 5 nghĩa là 5.000 ₫, nhập 5000 VND là 5.000 ₫. Xem giá trị trước khi lưu. Số dư tài khoản dùng ngày Asia/Ho_Chi_Minh. Mốc mới đặt lại cơ sở gộp; không có mốc mới thì chuyển tiếp. Luôn tính cả kế hoạch tháng cập nhật.</p><h3>Thu chi và công nợ</h3><p>Đối tượng dùng chung, chi tiết thu/chi riêng. Lưu toàn bộ lịch thu/chi, kể cả trước hoặc sau kỳ dự báo; chỉ tính các tháng giao nhau. Đổi kỳ dự báo không cắt hay kéo dài lịch. Chỉnh ước tính từ tháng được chọn và giữ các mốc khác. Công nợ tách khỏi tiền mặt; kế hoạch trả nợ là chi, thu hồi là thu. Không tự giảm dư nợ, không ghi thực tế, tính lãi hoặc ngân hàng.</p><h3>Lưu & khôi phục</h3><p>Một JSON riêng tư trên laptop; mọi thành viên sửa như nhau. Laptop phải chạy và truy cập được qua Tailscale HTTPS riêng tư. Không có sao lưu tự động, không mã hóa ổ đĩa; laptop không phải bản sao lưu. Xuất JSON riêng, giữ an toàn.</p><p>Xung đột/lỗi lưu giữ bản sửa chưa lưu. Xuất trước khi đóng; đọc lại trạng thái trước khi thử lại. Nạp bản máy chủ rồi áp dụng lại bằng tay, không tự gộp. Tệp hỏng/độ bền chưa rõ cần người vận hành; không tự đặt lại hoặc chiếm khóa.</p>${button('Thay bằng mẫu tổng hợp…', 'demo', 'type="button" data-mutate')}</div>`, null);
+  openEditor('Hướng dẫn & khôi phục', 'Ước tính theo tháng, không phải kế toán.', `<div class="field full"><h3>Rõ chi: tháng, nhóm và thẻ</h3><p>Danh sách mặc định chỉ gồm khoản thuộc tháng đang xem. Dùng Xem tất cả lịch đã lưu để sửa khoản ngoài tháng. Ba mức nhóm chọn Đối tượng / người hoặc khóa thẻ khác nhau; Lặp lại / Một lần luôn trong cùng. Thiếu khóa đang nhóm sẽ vào Khác, không tự gán thẻ. Khoản mới bắt đầu không có thẻ; Thêm thẻ để chọn hoặc tạo khóa / giá trị. Gỡ thẻ chỉ bỏ gán; định nghĩa đang dùng không thể xóa. Khóa mới trong biểu mẫu chỉ lưu cùng khoản chi hợp lệ.</p><p>Công tắc Ẩn/Hiện số tiền cụ thể mặc định tắt cho trang và biểu mẫu khoản chi; bật để xem / nhập tiền. Tắt không xóa tiền đã nhập hay lịch sử và không phải kiểm soát quyền truy cập. Tháng, nhóm, tìm kiếm, mở/thu gọn và công tắc chỉ đổi góc nhìn, không lưu vào JSON.</p><h3>Số tiền và số dư</h3><p>Số trống là chưa biết; 0 là đã biết. Nhập 5 nghĩa là 5.000 ₫, nhập 5000 VND là 5.000 ₫. Xem giá trị trước khi lưu. Số dư tài khoản dùng ngày Asia/Ho_Chi_Minh. Mốc mới đặt lại cơ sở gộp; không có mốc mới thì chuyển tiếp. Luôn tính cả kế hoạch tháng cập nhật.</p><h3>Thu chi và công nợ</h3><p>Đối tượng dùng chung, chi tiết thu/chi riêng. Lưu toàn bộ lịch thu/chi, kể cả trước hoặc sau kỳ dự báo; chỉ tính các tháng giao nhau. Đổi kỳ dự báo không cắt hay kéo dài lịch. Chỉnh ước tính từ tháng được chọn và giữ các mốc khác. Công nợ tách khỏi tiền mặt; kế hoạch trả nợ là chi, thu hồi là thu. Không tự giảm dư nợ, không ghi thực tế, tính lãi hoặc ngân hàng.</p><h3>Lưu & khôi phục</h3><p>${memberMode ? 'Của tôi có đầy đủ tài chính cá nhân; Home chỉ gồm nguồn chia sẻ, có mã chủ sở hữu. Chỉ chủ sở hữu đổi riêng tư; cộng tác viên xác nhận sửa nguồn chia sẻ. Admin quản lý truy cập và kỳ chung, không đọc tài chính riêng qua API. Quyền đặt lại mật khẩu / máy chủ là quyền tin cậy, không phải bảo vệ mã hóa. Home cập nhật mỗi 2 giây; mất kết nối chặn sửa. Nhập / đặt lại chỉ thay dữ liệu của tôi; xuất Home chỉ có nguồn chia sẻ. Đăng xuất xóa góc nhìn và bản sửa riêng.' : 'Một JSON riêng tư trên laptop; mọi thành viên sửa như nhau.'} Laptop phải chạy và truy cập được qua HTTPS riêng tư. Không có sao lưu tự động, không mã hóa ổ đĩa; laptop không phải bản sao lưu. Xuất JSON riêng, giữ an toàn.</p><p>Xung đột/lỗi lưu giữ bản sửa chưa lưu. Xuất trước khi đóng; đọc lại trạng thái trước khi thử lại. Nạp bản máy chủ rồi áp dụng lại bằng tay, không tự gộp. Tệp hỏng/độ bền chưa rõ cần người vận hành; không tự đặt lại hoặc chiếm khóa.</p>${button('Thay bằng mẫu tổng hợp…', 'demo', 'type="button" data-mutate')}</div>`, null);
 }
 $('#editor').addEventListener('input', updatePreviews);
-$('#editor').addEventListener('close', restoreFocus);
+$('#editor').addEventListener('close', () => { restoreFocus(); if (memberMode && editContext && !busy) { editContext = null; void load().catch(() => { stale = true; renderStatus(); }); } });
 $('#editor').addEventListener('submit', async e => {
   e.preventDefault(); if (busy || pending) return;
   try { await submitEditor?.(e.target.elements); }
@@ -418,15 +460,17 @@ $('#editor').addEventListener('submit', async e => {
 $('#confirm-form').addEventListener('submit', async e => { e.preventDefault(); const action = confirmAction; confirmAction = null; $('#confirm-dialog').close(); try { await action?.(); } catch (error) { if ($('#editor').open) { $('#form-error').textContent = error.message; $('#form-error').hidden = false; } else toast(error.message); } });
 // A queued close event from the previous dialog must not clear a newly opened
 // confirmation (e.g. cancel an import, then immediately choose another file).
-$('#confirm-dialog').addEventListener('close', () => { if (!$('#confirm-dialog').open) confirmAction = null; });
+$('#confirm-dialog').addEventListener('close', () => { if (!$('#confirm-dialog').open) { confirmAction = null; if (memberMode && editContext && !$('#editor').open && !busy) { editContext = null; void load().catch(() => { stale = true; renderStatus(); }); } } });
 $('#login-form').addEventListener('submit', async e => {
   e.preventDefault(); const f = e.target.elements; $('#login-error').hidden = true;
   try {
-    csrf = (await api('/api/login', { method: 'POST', body: JSON.stringify({ passphrase: f.passphrase.value }) })).csrf;
+    if (memberMode) clearMember();
+    const login = await api('/api/login', { method: 'POST', body: JSON.stringify(memberMode ? { username: f.username.value, password: f.passphrase.value } : { passphrase: f.passphrase.value }) });
+    csrf = login.csrf; member = login.member ?? null;
     f.passphrase.value = ''; if (!pending) await load(); else render(); authenticated(true);
   } catch (error) { $('#login-error').hidden = false; $('#login-error').textContent = error.status === 429 ? 'Quá nhiều lần thử; chờ 15 phút.' : 'Không đăng nhập/đọc được. Kiểm tra mật khẩu, máy chủ và kết nối riêng tư.'; }
 });
-$('#settings-button').addEventListener('click', () => setupDialog());
+$('#settings-button').addEventListener('click', () => { if (memberMode) memberSetup(); else setupDialog(); });
 $('#help-button').addEventListener('click', helpDialog);
 $('#import-button').addEventListener('click', () => { if (blocked()) return toast('Giải quyết bản chưa lưu / nguyên bản trước.'); $('#import-file').click(); });
 $('#import-file').addEventListener('change', async e => {
@@ -434,6 +478,12 @@ $('#import-file').addEventListener('change', async e => {
   try {
     if (file.size > MAX_BYTES) throw new Error('Tệp vượt 1 MB.');
     const raw = await file.text(), value = JSON.parse(raw);
+    if (memberMode) {
+      const source = value.scope === 'individual' && value.ownerId === member.id ? value.plan : value;
+      const next = validatePlan(source);
+      if (next.startMonth !== plan.startMonth || next.endMonth !== plan.endMonth) throw new Error('Bản nhập phải dùng kỳ dự báo chung. Đổi kỳ chung trước, không tự cắt lịch.');
+      confirmChange('Thay chỉ kế hoạch CỦA TÔI?', `${next.name} · ${next.items.length} khoản. Giữ quyền riêng tư của mã đã có; bản ghi mới mặc định chia sẻ. Home / người khác không bị thay.`, () => commit(next, 'replace')); return;
+    }
     if ([1, 2].includes(value?.version)) { prepareMigration(raw); return; }
     const next = validatePlan(value);
     confirmChange('Thay kế hoạch từ bản nhập?', `${next.name} · ${label(next.startMonth)}–${label(next.endMonth)} · ${next.items.length} khoản. Hãy xuất bản hiện tại trước.`, () => commit(next, 'replace'));
@@ -441,9 +491,10 @@ $('#import-file').addEventListener('change', async e => {
 });
 $('#legacy-button').addEventListener('click', () => { if (busy || pending) return; try { const raw = serverLegacy ? JSON.stringify(serverLegacy, null, 2) : localStorage.getItem(KEY); if (raw) prepareMigration(raw, !!serverLegacy); } catch (error) { toast(error.message); } });
 $('#export-button').addEventListener('click', async () => {
-  try { const source = pending ? pending.candidate : await api('/api/export'); download(JSON.stringify(source ?? plan, null, 2), `money-seasons-${pending ? 'UNSAVED' : 'original-plan'}.json`); toast('Bản xuất không mã hóa; giữ ở nơi an toàn.'); } catch { toast('Không xuất được. Kiểm tra đăng nhập / kết nối.'); }
+  try { const source = pending ? pending.candidate : await api(memberMode && scope === 'home' ? '/api/home/export' : '/api/export'); download(JSON.stringify(source ?? plan, null, 2), `money-seasons-${pending ? 'UNSAVED' : 'original-plan'}.json`); toast('Bản xuất không mã hóa; giữ ở nơi an toàn.'); } catch { toast('Không xuất được. Kiểm tra đăng nhập / kết nối.'); }
 });
 $('#reconcile-button').addEventListener('click', async () => {
+  if (memberMode) { toast('Xuất bản sửa của tôi; nạp bản máy chủ và áp dụng lại bằng tay. Không tự thử lại quyền cũ.'); return; }
   if (!pending) return;
   try {
     const saved = await api('/api/plan');
@@ -455,7 +506,7 @@ $('#reconcile-button').addEventListener('click', async () => {
   } catch { toast('Chưa đọc lại được. Bản sửa vẫn giữ.'); }
 });
 $('#retry-button').addEventListener('click', async () => { if (!pending?.checked) return; const draft = pending; pending = null; await commit(draft.candidate, draft.operation, draft.migrationConfirmed); });
-$('#reload-button').addEventListener('click', () => confirmChange('Nạp bản máy chủ?', 'Bản chưa lưu sẽ rời bộ nhớ. Xuất trước. Ô biểu mẫu được giữ để kiểm tra/áp dụng lại bằng tay.', load));
+$('#reload-button').addEventListener('click', () => confirmChange('Nạp bản máy chủ?', 'Bản chưa lưu sẽ rời bộ nhớ. Xuất trước và áp dụng lại bằng tay.', async () => { if (memberMode) { $('#editor').close(); $('#editor').innerHTML = ''; editContext = null; } await load(); }));
 $('#logout-button').addEventListener('click', () => confirmChange('Đăng xuất?', 'Bản chưa lưu sẽ rời bộ nhớ. Hãy xuất trước.', async () => { await api('/api/logout', { method: 'POST', body: '{}' }); location.reload(); }));
 document.addEventListener('input', e => {
   if (e.target.id === 'expense-search') {
@@ -482,7 +533,9 @@ document.addEventListener('change', e => {
     if (item && occurs(item, e.target.value)) { $('#edit-form [name=amount]').value = formatAmountInput(plannedAmount(item, e.target.value)); updatePreviews(); }
   }
 });
-document.addEventListener('click', e => {
+document.addEventListener('click', async e => {
+  const privacy = e.target.closest('[data-privacy]');
+  if (privacy && memberMode && !blocked()) { confirmChange('Đổi quyền riêng tư?', `${privacy.textContent} · ${member.name} · ${privacy.dataset.privacy}. Không thu hồi được bản đã tải trước.`, async () => { await api('/api/sharing', { method: 'POST', body: JSON.stringify({ expectedRevision: revision, ownerId: member.id, kind: privacy.dataset.kind, id: privacy.dataset.privacy, shared: privacy.textContent === 'Chia sẻ' }) }); await load(); }); return; }
   if (e.target.closest('[data-add-tag]') && !blocked()) { $('#expense-tag-rows').insertAdjacentHTML('beforeend', tagRow()); updateTagRows(); $$('#editor [data-tag-key]').at(-1).focus(); return; }
   if (e.target.closest('[data-remove-tag]') && !blocked()) { e.target.closest('[data-tag-row]').remove(); updateTagRows(); $('#editor [data-add-tag]').focus(); return; }
   if (e.target.closest('[data-delete-tag-key]') && !blocked()) { void deleteManagedTag(); return; }
@@ -492,8 +545,17 @@ document.addEventListener('click', e => {
   const disclosure = e.target.closest('[data-collapse], [data-collapse-all]');
   if (disclosure) { toggleCollapse(disclosure); return; }
   const target = e.target.closest('[data-action]'); if (!target) return;
-  const { action, id, kind, object, month, debt, date } = target.dataset;
+  const { action, kind, object, month, debt, date } = target.dataset;
+  let id = target.dataset.id;
   if (target.hasAttribute('data-mutate') && blocked()) return;
+  if (memberMode && scope === 'home' && action === 'debt-plan') {
+    const debtAccount = plan.debtAccounts.find(a => a.id === id);
+    try { await beginHomeEdit({ dataset: { action: 'item' } }); itemDialog({ kind: debtAccount.direction === 'payable' ? 'expense' : 'income', suggestion: `${debtAccount.direction === 'payable' ? 'Trả nợ' : 'Thu hồi'} · ${debtAccount.name}` }); } catch (error) { toast(error.message); }
+    return;
+  }
+  if (memberMode && scope === 'home' && ['item', 'delete-item', 'account', 'snapshot'].includes(action)) {
+    try { id = await beginHomeEdit(target); } catch (error) { toast(error.message); return; }
+  }
   if (action === 'tags') tagManager();
   if (action === 'previous-month' || action === 'next-month') { const months = range(); selectedMonth = months[Math.max(0, Math.min(months.length - 1, months.indexOf(selectedMonth) + (action === 'next-month' ? 1 : -1)))]; render(); ($(`[data-action="${action}"]:not(:disabled)`) ?? $('#view-month')).focus({ preventScroll: true }); }
   if (action === 'all-expense-schedules') { allExpenseSchedules = !allExpenseSchedules; renderAndFocus('[data-action=all-expense-schedules]'); }
@@ -509,10 +571,104 @@ document.addEventListener('click', e => {
   if (action === 'debt-plan') { const a = plan.debtAccounts.find(a => a.id === id); itemDialog({ kind: a.direction === 'payable' ? 'expense' : 'income', suggestion: `${a.direction === 'payable' ? 'Trả nợ' : 'Thu hồi'} · ${a.name}` }); }
   if (action === 'table' || action === 'cards') { table = action === 'table'; render(); }
   if (action === 'month') monthDialog(month);
-  if (action === 'new-plan') { $('#editor').close(); setupDialog(true); }
+  if (action === 'new-plan') { $('#editor').close(); if (memberMode) confirmChange('Xóa chỉ kế hoạch của tôi?', 'Xuất trước. Không thay người khác hoặc kỳ chung.', () => commit(blankPlan(plan.startMonth, plan.endMonth), 'replace')); else setupDialog(true); }
+  if (action === 'demo' && memberMode) { toast('Nhập bản mẫu đúng kỳ chung vào Của tôi; không thay cả Home.'); return; }
   if (action === 'demo') confirmChange('Thay bằng dữ liệu mẫu?', 'Thay toàn bộ bằng tên/số liệu tổng hợp; xuất bản hiện tại trước.', () => saveAndClose(demoPlan(), 'replace'));
   if (action === 'download-original' && migration) { download(migration.raw, 'money-seasons-original-legacy.json'); migration.downloaded = true; $('#edit-form [name=ack]').disabled = false; }
 });
 window.addEventListener('beforeunload', e => { if (pending || busy) { e.preventDefault(); e.returnValue = ''; } });
-try { csrf = (await api('/api/session')).csrf; await load(); authenticated(true); }
+async function beginHomeEdit(target) {
+  const kind = ['item', 'delete-item'].includes(target.dataset.action) ? 'items' : target.dataset.action === 'debt-plan' || target.dataset.debt === 'true' ? 'debtAccounts' : 'accounts';
+  const record = target.dataset.id ? memberView.provenance.find(p => p.kind === kind && p.id === target.dataset.id) : null;
+  const ownerId = record?.ownerId ?? member.id;
+  const source = ownerId === member.id ? (await api('/api/plan')).plan : ownerPlan(memberView, ownerId);
+  editContext = { ownerId, base: structuredClone(source), revision, home: memberView };
+  plan = source;
+  return record?.sourceId;
+}
+async function commitMember(candidate, operation) {
+  if (blocked()) { toast('Dữ liệu cũ / bản chưa lưu: đọc lại trước khi sửa.'); return false; }
+  const valid = validatePlan(candidate), context = editContext;
+  const foreign = context && context.ownerId !== member.id;
+  let route = '/api/individual', input = { expectedRevision: context?.revision ?? revision, plan: valid, operation, confirmed: true };
+  if (!foreign && $('#edit-form [name=shared]')?.value === 'false') {
+    const before = context?.base ?? memberView.plan;
+    input.privateRecords = ['items', 'accounts', 'debtAccounts'].flatMap(kind => valid[kind].filter(r => !before[kind].some(old => old.id === r.id)).map(r => ({ kind, id: r.id })));
+  }
+  if (foreign) {
+    const command = recordDiff(context.base, valid, context.ownerId);
+    route = '/api/records'; input = { expectedRevision: context.revision, command };
+    const name = context.home.owners.find(o => o.id === context.ownerId)?.name ?? context.ownerId;
+    return new Promise(resolve => confirmChange('Xác nhận sửa bản ghi chia sẻ?', `${name} · ${command.value?.name ?? command.id} · ${command.action}. Thay đúng nguồn một lần; không đổi chủ sở hữu hoặc riêng tư.`, async () => resolve(await saveMemberRequest(route, input, null))));
+  }
+  return saveMemberRequest(route, input, valid);
+}
+async function saveMemberRequest(route, input, candidate) {
+  busy = true; renderStatus();
+  try {
+    await api(route, { method: 'POST', body: JSON.stringify(input) });
+    await load(); toast('Đã lưu bền vững · nguồn đã cập nhật.'); return true;
+  } catch (error) {
+    if (!member) return false;
+    // Keep only the actor's own draft. Never retain a foreign draft after a
+    // permission/conflict failure, where it could disclose newly private content.
+    if (candidate) pending = { candidate, revision: input.expectedRevision, checked: false };
+    else { editContext = null; $('#editor').close(); $('#editor').innerHTML = ''; }
+    stale = true;
+    warning(error.status === 409 ? 'XUNG ĐỘT · Chưa lưu. Xuất bản sửa của tôi, nạp bản máy chủ, áp dụng lại bằng tay.' : 'CHƯA XÁC NHẬN LƯU / QUYỀN ĐÃ ĐỔI. Không thử lại tự động. Đọc lại bản máy chủ; lỗi độ bền cần người vận hành.');
+    return false;
+  } finally { busy = false; renderStatus(); }
+}
+function memberSetup() {
+  const source = plan;
+  openEditor('Kế hoạch của tôi', 'Chỉ đổi tên / đặt lại dữ liệu của tôi. Kỳ dự báo chung do admin quản lý.', field('Tên kế hoạch', `<input name="name" required maxlength="80" value="${h(source.name)}">`, '', true), async f => saveAndClose({ ...source, name: f.name.value }), 'Lưu', button('Kế hoạch trống mới…', 'new-plan', 'type="button"', 'danger'));
+}
+const memberControls = memberDialogs({ api, member: () => member, openEditor, field, h, confirmChange, load, plan: () => plan, revision: () => revision, toast, clear: clearMember });
+for (const [id, action] of [['password-button', 'password'], ['users-button', 'users'], ['period-button', 'period'], ['migration-button', 'migration']]) {
+  document.getElementById(id).addEventListener('click', () => { if (memberMode && member && !busy) Promise.resolve(memberControls[action]()).catch(e => toast(e.message)); });
+}
+for (const [id, nextScope] of [['my-button', 'individual'], ['home-button', 'home']]) {
+  document.getElementById(id).addEventListener('click', async () => {
+    if (busy || pending || $('#editor').open) return toast('Đóng / xuất bản sửa trước khi đổi góc nhìn.');
+    scope = nextScope; editContext = null; collapsed.clear(); expenseSearch = ''; expenseGroups = ['object', '', ''];
+    try { await load(); } catch { stale = true; renderStatus(); }
+  });
+}
+async function pollMembers() {
+  if (!memberMode || !member || polling || busy) return;
+  polling = true;
+  try {
+    const identity = await api('/api/member'); member = identity.member;
+    const current = await api(scope === 'home' ? '/api/home' : '/api/plan');
+    if (current.durabilityUncertain) throw new Error('uncertain');
+    if (current.revision !== revision || stale) {
+      if (pending) {
+        if (scope === 'home' && current.plan) { const draft = plan; memberView = current; plan = current.plan; render(); plan = draft; }
+        return;
+      }
+      if (editContext && editContext.ownerId !== member.id) {
+        editContext = null; $('#editor').close(); $('#editor').innerHTML = ''; $('#confirm-dialog').close(); confirmAction = null;
+        await load(); toast('Nguồn chia sẻ / quyền đã đổi. Đã xóa bản sửa cũ; mở lại từ nguồn hiện tại.'); return;
+      }
+      // Keep an own form with its ORIGINAL revision; a remote save must never
+      // silently turn its stale values into a fresh overwrite.
+      if ($('#editor').open) {
+        const draftPlan = plan, draftView = memberView;
+        stale = false; plan = current.plan ?? blankPlan(); memberView = current; render();
+        plan = draftPlan; memberView = draftView;
+        warning('Dữ liệu / quyền đã được đọc lại. Giữ nguyên biểu mẫu và phiên bản gốc; lưu trên bản cũ sẽ bị từ chối, giữ bản sửa CỦA TÔI để xuất và áp dụng bằng tay.'); renderStatus();
+      } else await load();
+    }
+  } catch { if (member) { stale = true; renderStatus(); } }
+  finally { polling = false; }
+}
+window.addEventListener('offline', () => { if (memberMode) { stale = true; renderStatus(); } });
+window.addEventListener('online', () => { void pollMembers(); });
+setInterval(pollMembers, 2000);
+if (memberMode) {
+  $('#username-field').hidden = false; $('#username-field input').required = true;
+  $('#access-note').textContent = 'Tài chính cá nhân và một Home chia sẻ. Mật khẩu riêng; admin không có quyền đọc tài chính riêng qua ứng dụng.';
+  $('#login-form [name=passphrase]').parentElement.firstChild.textContent = 'Mật khẩu cá nhân';
+}
+try { const session = await api('/api/session'); csrf = session.csrf; member = session.member ?? null; await load(); authenticated(true); }
 catch { authenticated(false); }

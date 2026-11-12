@@ -33,7 +33,7 @@ export function openMembershipStore(directory, { validate, hook } = {}) {
   if (typeof validate !== 'function') throw new StoreError('membership-validator-required');
   return openFinanceStore(directory, { hook }, false, validate);
 }
-async function openFinanceStore(directory, { hook = async () => {} } = {}, household, memberValidator) {
+async function openFinanceStore(directory, { hook = async () => {}, allowMigration = false } = {}, household, memberValidator) {
   const members = typeof memberValidator === 'function';
   const format = members ? 'money-seasons-users/v1' : household ? 'money-seasons-household/v1' : schemaVersion;
   const key = members ? 'users' : household ? 'household' : 'plan';
@@ -73,8 +73,16 @@ async function openFinanceStore(directory, { hook = async () => {} } = {}, house
       // Preserve the provisioned user-document schema (its own revision), never
       // wrap credentials in the finance envelope or create defaults on missing data.
       const envelope = members ? { schemaVersion: format, revision: decoded.revision, users: decoded } : decoded;
-      if (envelope.schemaVersion !== format || !Number.isSafeInteger(envelope.revision) || envelope.revision < 1 ||
-          (household && (Object.keys(envelope).length !== 3 || !Object.hasOwn(envelope, key)))) throw new StoreError('invalid-store');
+      const legacyHousehold = household && allowMigration && envelope.schemaVersion === schemaVersion;
+      if ((!legacyHousehold && envelope.schemaVersion !== format) || !Number.isSafeInteger(envelope.revision) || envelope.revision < 1 ||
+          (household && (Object.keys(envelope).length !== 3 || !Object.hasOwn(envelope, legacyHousehold ? 'plan' : key)))) throw new StoreError('invalid-store');
+      if (legacyHousehold) {
+        if (envelope.plan?.version === 1) validateLegacyPlan(envelope.plan);
+        else if (envelope.plan?.version === 2) validateV2(envelope.plan);
+        else validatePlan(envelope.plan);
+        initialized = true;
+        return { schemaVersion: format, revision: envelope.revision, household: null, legacyPlan: envelope.plan, migrationRequired: true };
+      }
       const migrationRequired = !household && !members && [1, 2].includes(envelope.plan?.version);
       if (migrationRequired) {
         // Validate but do not normalize, reinterpret, or discard any original field.
@@ -107,7 +115,7 @@ async function openFinanceStore(directory, { hook = async () => {} } = {}, house
         if (current.revision === Number.MAX_SAFE_INTEGER) throw new StoreError('revision-exhausted');
         if (current.migrationRequired && !migrationConfirmed) throw new StoreError('migration-confirmation-required', 400);
         let plan;
-        try { plan = validate(reduce ? reduce(current[key]) : candidate); }
+        try { plan = validate(reduce ? reduce(current[key], current.legacyPlan) : candidate); }
         catch (e) { if (e instanceof StoreError) throw e; throw new StoreError(household ? 'invalid-household' : 'invalid-plan', 400); }
         if (members && plan.revision !== current.revision + 1) throw new StoreError('invalid-membership-revision', 400);
         if (current.migrationRequired) {

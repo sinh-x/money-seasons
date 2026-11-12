@@ -1,6 +1,7 @@
 // Explicit host-only snapshot provisioning. Never calls openStore on the source.
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
+import { validateHousehold } from '../public/household-model.js';
 import { validatePlan, MAX_BYTES } from '../public/model.js';
 import { validatePlan as validateV2, validateLegacyPlan } from '../public/legacy-model.js';
 import { privateDir, readPrivate, exclusiveFile, syncDir, digest, inside, fail, withInstanceLock, atomicJson } from './stack-identity.mjs';
@@ -14,7 +15,13 @@ export function snapshotInfo(raw) {
   if (raw.length > ENVELOPE_LIMIT) fail('Snapshot exceeds envelope limit');
   try {
     const envelope = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(raw));
-    if (envelope.schemaVersion !== 'money-seasons-store/v1' || !Number.isSafeInteger(envelope.revision) || envelope.revision < 1) fail('Invalid envelope');
+    const household = envelope.schemaVersion === 'money-seasons-household/v1';
+    if ((!household && envelope.schemaVersion !== 'money-seasons-store/v1') || !Number.isSafeInteger(envelope.revision) || envelope.revision < 1) fail('Invalid envelope');
+    if (household) {
+      if (Object.keys(envelope).length !== 3) fail('Invalid envelope');
+      validateHousehold(envelope.household);
+      return { digest: digest(raw), schemaVersion: envelope.schemaVersion, planVersion: 4, revision: envelope.revision };
+    }
     if (Buffer.byteLength(JSON.stringify(envelope.plan)) > MAX_BYTES) fail('Plan exceeds limit');
     const version = envelope.plan?.version;
     if (version === 1) validateLegacyPlan(envelope.plan);

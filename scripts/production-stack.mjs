@@ -10,15 +10,17 @@ import { fileURLToPath } from 'node:url';
 import { checkout, worktreeIdentity, privateDir, readPrivate, inside, fail, withInstanceLock, GuardError } from './stack-identity.mjs';
 import { docker } from './local-stack.mjs';
 import { validateBasePath } from '../public/base-path.js';
+import { readPrivateJSON, validateMembership } from '../membership.mjs';
 
 export const productionProject = 'money-seasons-production';
 const sourceLabel = 'org.money-seasons.source', purposeLabel = 'org.money-seasons.purpose', revisionLabel = 'org.opencontainers.image.revision';
 const keys = ['MONEY_SEASONS_PRODUCTION_REPO', 'MONEY_SEASONS_RELEASE', 'MONEY_SEASONS_DATA_DIR', 'MONEY_SEASONS_PASSPHRASE_FILE', 'MONEY_SEASONS_CADDY_DIR', 'MONEY_SEASONS_ORIGINS', 'MONEY_SEASONS_BASE_PATH', 'MONEY_SEASONS_COOKIE_NAME', 'MONEY_SEASONS_DOCKER_HOST', 'MONEY_SEASONS_DOCKER_ID'];
+const memberKeys = ['MONEY_SEASONS_AUTH_MODE', 'MONEY_SEASONS_MEMBERS_DIR', 'MONEY_SEASONS_ROLES_FILE'];
 export function productionSettings(raw) {
   const seen = new Set();
   for (const line of raw.split(/\r?\n/).filter(s => s.trim() && !s.trim().startsWith('#'))) {
     const key = line.match(/^([A-Z_]+)=/)?.[1];
-    if (!keys.includes(key) || seen.has(key)) fail('Unknown/duplicate production setting'); seen.add(key);
+    if (![...keys, ...memberKeys].includes(key) || seen.has(key)) fail('Unknown/duplicate production setting'); seen.add(key);
   }
   const config = parseEnv(raw);
   for (const key of keys.filter(k => !['MONEY_SEASONS_COOKIE_NAME', 'MONEY_SEASONS_BASE_PATH'].includes(k))) if (!config[key]) fail('Missing explicit private production setting');
@@ -31,6 +33,17 @@ export function productionSettings(raw) {
   if (origins.length !== expected.length || new Set(origins).size !== origins.length || origins.some(o => !expected.includes(o))) fail('Invalid production origin profile');
   config.MONEY_SEASONS_ORIGINS = expected.join(',');
   if (config.MONEY_SEASONS_COOKIE_NAME && config.MONEY_SEASONS_COOKIE_NAME !== 'ms_session' && !/^ms_dev_[a-f0-9]{64}$/.test(config.MONEY_SEASONS_COOKIE_NAME)) fail('Invalid cookie namespace');
+  const mode = config.MONEY_SEASONS_AUTH_MODE || 'legacy';
+  if (!['legacy', 'members'].includes(mode)) fail('Unknown production authentication mode');
+  if (mode === 'members') {
+    for (const key of memberKeys.slice(1)) if (!config[key] || !path.isAbsolute(config[key]) || path.resolve(config[key]) !== config[key]) fail('Explicit canonical private member paths required');
+    const member = config.MONEY_SEASONS_MEMBERS_DIR, roles = config.MONEY_SEASONS_ROLES_FILE;
+    for (const other of [config.MONEY_SEASONS_DATA_DIR, config.MONEY_SEASONS_CADDY_DIR, member]) {
+      if (inside(roles, other) || inside(other, roles)) fail('Production role config must be separate');
+    }
+    for (const other of [config.MONEY_SEASONS_DATA_DIR, config.MONEY_SEASONS_CADDY_DIR]) if (inside(member, other) || inside(other, member)) fail('Production membership storage must be separate');
+    if (inside(config.MONEY_SEASONS_PASSPHRASE_FILE, member) || inside(member, config.MONEY_SEASONS_PASSPHRASE_FILE) || roles === config.MONEY_SEASONS_PASSPHRASE_FILE) fail('Production credentials must be separate');
+  } else if (config.MONEY_SEASONS_MEMBERS_DIR || config.MONEY_SEASONS_ROLES_FILE) fail('Member paths require explicit member mode');
   const data = config.MONEY_SEASONS_DATA_DIR, ca = config.MONEY_SEASONS_CADDY_DIR, secret = config.MONEY_SEASONS_PASSPHRASE_FILE;
   if (inside(data, ca) || inside(ca, data) || inside(secret, data) || inside(secret, ca)) fail('Production data/CA/credential paths must be separate');
   return config;
@@ -41,8 +54,8 @@ export function productionEnvironment(config) {
     ...config, MONEY_SEASONS_BASE_PATH: config.MONEY_SEASONS_BASE_PATH || '',
     MONEY_SEASONS_PROXY_PROFILE: config.MONEY_SEASONS_BASE_PATH ? 'tailnet-local' : 'root-local' };
 }
-export function productionArgs(root, args) {
-  return ['compose', '--env-file', '/dev/null', '--project-directory', root, '-p', productionProject, '-f', path.join(root, 'compose.yaml'), '-f', path.join(root, 'compose.production-local.yaml'), ...args];
+export function productionArgs(root, args, config = {}) {
+  return ['compose', '--env-file', '/dev/null', '--project-directory', root, '-p', productionProject, '-f', path.join(root, 'compose.yaml'), '-f', path.join(root, 'compose.production-local.yaml'), ...(config.MONEY_SEASONS_AUTH_MODE === 'members' ? ['-f', path.join(root, 'compose.production-members.yaml')] : []), ...args];
 }
 export async function productionContext(command) {
   if (process.getuid() !== 1000) fail('Host/container UID1000 required');
@@ -54,6 +67,10 @@ export async function productionContext(command) {
   if (['up', 'build', 'config', 'verify'].includes(command) && (git('rev-parse', 'HEAD') !== config.MONEY_SEASONS_RELEASE || git('status', '--porcelain'))) fail('Production requires the exact pinned clean main commit; no automatic Git update');
   await privateDir(config.MONEY_SEASONS_DATA_DIR); await privateDir(config.MONEY_SEASONS_CADDY_DIR);
   await readPrivate(config.MONEY_SEASONS_PASSPHRASE_FILE, 4096);
+  if (config.MONEY_SEASONS_AUTH_MODE === 'members') {
+    await privateDir(config.MONEY_SEASONS_MEMBERS_DIR);
+    validateMembership(await readPrivateJSON(path.join(config.MONEY_SEASONS_MEMBERS_DIR, 'users.json')), await readPrivateJSON(config.MONEY_SEASONS_ROLES_FILE));
+  }
   const env = productionEnvironment(config);
   const run = args => docker(args, { env, cwd: identity.worktree, timeout: 180_000 });
   if (run(['info', '--format', '{{.ID}}']) !== config.MONEY_SEASONS_DOCKER_ID) fail('Production Docker daemon identity mismatch');
@@ -64,7 +81,7 @@ export function verifyProductionContainer(c, { config, root }) {
   const labels = c.Config?.Labels, service = labels?.['com.docker.compose.service'], revision = labels?.[revisionLabel];
   if (!owns(labels, root) || labels['com.docker.compose.project'] !== productionProject || !['web', 'caddy'].includes(service) || !/^[a-f0-9]{40}$/.test(revision)) fail('Unknown production container ownership');
   if (c.Config.Image !== `${productionProject}-${service}:${revision}` || !c.HostConfig.ReadonlyRootfs || c.HostConfig.Privileged || c.HostConfig.PidsLimit !== 64 || c.HostConfig.Init !== true) fail('Unexpected production image/security/init/PID configuration');
-  const expected = service === 'web' ? [['/data', config.MONEY_SEASONS_DATA_DIR, true], ['/run/private/passphrase', config.MONEY_SEASONS_PASSPHRASE_FILE, false]] : [['/etc/caddy/Caddyfile', path.join(root, 'ops/Caddyfile.production-local'), false], ['/data', config.MONEY_SEASONS_CADDY_DIR, true]];
+  const expected = service === 'web' ? [['/data', config.MONEY_SEASONS_DATA_DIR, true], ['/run/private/passphrase', config.MONEY_SEASONS_PASSPHRASE_FILE, false], ...(config.MONEY_SEASONS_AUTH_MODE === 'members' ? [['/members', config.MONEY_SEASONS_MEMBERS_DIR, true], ['/run/private/roles.json', config.MONEY_SEASONS_ROLES_FILE, false]] : [])] : [['/etc/caddy/Caddyfile', path.join(root, 'ops/Caddyfile.production-local'), false], ['/data', config.MONEY_SEASONS_CADDY_DIR, true]];
   const binds = c.Mounts.filter(m => m.Type === 'bind');
   if (binds.length !== expected.length || expected.some(([target, source, rw]) => !binds.some(m => m.Destination === target && m.Source === source && m.RW === rw)) || c.Mounts.some(m => !['bind', 'tmpfs'].includes(m.Type))) fail('Foreign production storage/mount refused');
   if (service === 'web') {
@@ -79,6 +96,12 @@ export function productionProfileMatches(c, config) {
   const expected = { MONEY_SEASONS_BASE_PATH: config.MONEY_SEASONS_BASE_PATH || '' };
   if (service === 'web') Object.assign(expected, { MONEY_SEASONS_ORIGINS: config.MONEY_SEASONS_ORIGINS, MONEY_SEASONS_COOKIE_NAME: config.MONEY_SEASONS_COOKIE_NAME || 'ms_session' });
   else expected.MONEY_SEASONS_PROXY_PROFILE = config.MONEY_SEASONS_BASE_PATH ? 'tailnet-local' : 'root-local';
+  if (service === 'web') {
+    const modes = (c.Config.Env || []).filter(e => e.startsWith('MONEY_SEASONS_AUTH_MODE='));
+    const mode = config.MONEY_SEASONS_AUTH_MODE || 'legacy';
+    if (modes.length > 1 || (modes[0] ?? 'MONEY_SEASONS_AUTH_MODE=legacy') !== `MONEY_SEASONS_AUTH_MODE=${mode}`) return false;
+    if (mode === 'members') Object.assign(expected, { MONEY_SEASONS_MEMBERS_DIR: '/members', MONEY_SEASONS_ROLES_FILE: '/run/private/roles.json' });
+  }
   // Compare only the allowlisted public config, without dumping raw environments.
   return Object.entries(expected).every(([key, value]) => {
     const entries = (c.Config.Env || []).filter(e => e.startsWith(key + '='));
@@ -88,6 +111,7 @@ export function productionProfileMatches(c, config) {
 export function productionProbeRoutes(config) {
   const prefix = config.MONEY_SEASONS_BASE_PATH || '';
   const routes = [['/healthz', 200], [prefix + '/', 200], ...['session', 'plan', 'export'].map(p => [prefix + '/api/' + p, 401])];
+  if (config.MONEY_SEASONS_AUTH_MODE === 'members') for (const route of ['home', 'home/export', 'member', 'users']) routes.push([prefix + '/api/' + route, 401]);
   if (prefix) routes.push(['/', 308, prefix + '/'], [prefix, 308, prefix + '/'], [prefix + '?x=%2Fsafe&n=1', 308, prefix + '/?x=%2Fsafe&n=1'], ['/app.js', 404], ['/api/plan', 404], [prefix + 'x/', 404], [prefix + prefix + '/', 404]);
   return routes;
 }
@@ -113,8 +137,8 @@ async function freePort(port, host) {
   await new Promise((resolve, reject) => { server.once('error', () => reject(new GuardError('Production port occupied; owner unchanged'))); server.listen({ port, host, ipv6Only: host === '::1' }, resolve); });
   await new Promise(r => server.close(r));
 }
-async function settled(data) {
-  try { await fs.lstat(path.join(data, 'writer.lock')); fail('Unknown production writer lock; no automatic recovery'); }
+async function settled(data, lock = 'writer.lock') {
+  try { await fs.lstat(path.join(data, lock)); fail('Unknown production writer lock; no automatic recovery'); }
   catch (e) { if (e.code !== 'ENOENT') throw e; }
 }
 export async function verifyProduction(context) {
@@ -135,12 +159,12 @@ export async function main(command) {
   if (!['config', 'build', 'up', 'down', 'status', 'verify'].includes(command)) fail('Usage: production-stack.mjs config|build|up|down|status|verify');
   const context = await productionContext(command), { config, root, run } = context;
   return withInstanceLock(context, async () => {
-    const before = productionInventory(context), compose = args => run(productionArgs(root, args));
+    const before = productionInventory(context), compose = args => run(productionArgs(root, args, config));
     if (command === 'config') { compose(['config', '--quiet']); console.log('Production configuration valid; no service changes.'); return; }
     if (command === 'build') { compose(['build', '--pull=false']); productionInventory(context); console.log('Pinned production images built; services unchanged.'); return; }
-    if (command === 'down') { compose(['down', '--timeout', '30']); if (productionInventory(context).length) fail('Production stop uncertain'); await settled(config.MONEY_SEASONS_DATA_DIR); console.log('Only production stopped; all data/credentials/CA/images retained.'); return; }
+    if (command === 'down') { compose(['down', '--timeout', '30']); if (productionInventory(context).length) fail('Production stop uncertain'); await settled(config.MONEY_SEASONS_DATA_DIR); if (config.MONEY_SEASONS_AUTH_MODE === 'members') await settled(config.MONEY_SEASONS_MEMBERS_DIR, 'users.lock'); console.log('Only production stopped; all data/credentials/CA/images retained.'); return; }
     if (command === 'up') {
-      if (!before.some(c => c.Config.Labels['com.docker.compose.service'] === 'web' && c.State.Running)) { await freePort(3080, '127.0.0.1'); await settled(config.MONEY_SEASONS_DATA_DIR); }
+      if (!before.some(c => c.Config.Labels['com.docker.compose.service'] === 'web' && c.State.Running)) { await freePort(3080, '127.0.0.1'); await settled(config.MONEY_SEASONS_DATA_DIR); if (config.MONEY_SEASONS_AUTH_MODE === 'members') await settled(config.MONEY_SEASONS_MEMBERS_DIR, 'users.lock'); }
       if (!before.some(c => c.Config.Labels['com.docker.compose.service'] === 'caddy' && c.State.Running)) { await freePort(3443, '127.0.0.1'); await freePort(3443, '::1'); }
       for (const service of ['web', 'caddy']) run(['image', 'inspect', `${productionProject}-${service}:${config.MONEY_SEASONS_RELEASE}`]);
       compose(['up', '-d', '--no-build', '--pull', 'never', '--force-recreate', '--wait', '--wait-timeout', '90']);

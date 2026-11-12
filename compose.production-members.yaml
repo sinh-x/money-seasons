@@ -1,0 +1,25 @@
+# Opt-in member-mode production overlay; guarded production CLI only.
+# Finance, user credentials and operator roles are independent private locations.
+services:
+  web:
+    environment:
+      MONEY_SEASONS_AUTH_MODE: members
+      MONEY_SEASONS_MEMBERS_DIR: /members
+      MONEY_SEASONS_ROLES_FILE: /run/private/roles.json
+    # The strict private-config reader requires an owned 0700 parent. Docker's
+    # implicit bind-target parent is root-owned 0755; provide a private tmpfs.
+    # Both nested credential/role file binds remain read-only.
+    tmpfs:
+      - /run/private:rw,noexec,nosuid,size=1m,uid=1000,gid=1000,mode=0700
+    volumes:
+      - type: bind
+        source: ${MONEY_SEASONS_MEMBERS_DIR:?Set private production membership storage}
+        target: /members
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MONEY_SEASONS_ROLES_FILE:?Set private operator role configuration}
+        target: /run/private/roles.json
+        read_only: true
+        bind:
+          create_host_path: false

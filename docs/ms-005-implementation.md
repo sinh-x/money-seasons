@@ -2,7 +2,26 @@
 
 ## 1. Scope and status
 
-**Partial implementation; not product acceptance or a deployable multi-user feature.**
+**Current continuation: integrated local member-mode candidate; not product acceptance.**
+
+Deployment `d-d4508d` continued after P2b2 at the operator's explicit request.
+Startup now explicitly composes durable membership and household services;
+period administration, exact-original explicit-owner migration, own-only
+metadata/import/reset and My/Home UI are connected. The Vietnamese five-workspace
+UI includes owner/privacy controls, confirmed collaboration, two-second refresh,
+offline blocking, scoped recovery and account administration. Docker runtime
+modules and guarded member-mode UAT overlay are included. A synthetic-only stack
+is running at **https://localhost:3085**. See [setup, evidence and human checklist](ms-005-uat.md).
+No production rollout, independent review, hosted CI or human UAT is claimed.
+A later explicit operator request authorized a one-way production finance snapshot
+into a NEW private HTTP review dataset, with Sinh admin/owner and Ân/Vy members.
+Only the copy was migrated, with exact originals preserved; production remained
+unchanged. The current HTTP URL is http://localhost:3086; setup/credential locator
+and separation from the preserved synthetic stacks are in the linked UAT guide.
+Current continuation changes remain uncommitted for review.
+
+**Historical P1/P2 checkpoint description below (superseded only by the
+continuation above, not rewritten as earlier completion evidence):**
 This is the living builder index for the r003 individual-plan/live-Home requirements.
 P1 adds isolated membership/schema primitives; P2a adds member-session revocation
 and a current-source shared-write reducer. P2b1 adds an explicitly injected scoped
@@ -227,7 +246,7 @@ External session-log writes were denied in preceding runs; no unchanged external
 write or alternate-path workaround is attempted. This repository index and ticket
 comments preserve engineering evidence, not a claim that an external session log exists.
 
-## 6. Acceptance and boundaries
+## 6. Historical P2b2 acceptance and boundaries
 
 No independent review, full matrix execution, hosted CI, browser/UAT observation,
 human acceptance, push/PR/merge, deployment, real migration or checkout return.
@@ -235,7 +254,10 @@ No implementation child. No legacy approval/counter history changed.
 Production member mode remains unactivated until durable membership, migration
 and UI integration are separately tested. Existing persisted records were not converted.
 
-## 7. Remaining dependency-ordered work
+## 7. Historical remaining dependency-ordered work at P2b2
+
+The local continuation above implements these product paths. Independent review,
+CI and human acceptance remain separate outstanding gates. Historical handoff:
 
 1. Production member-mode startup/bootstrap/reload composition remains pending;
    scoped household and durable membership are currently explicit injected services.

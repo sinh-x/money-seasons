@@ -7,6 +7,7 @@ import { randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { checkout, loadInstance, privateDir, readPrivate, exclusiveFile, syncDir, withInstanceLock, availablePort, fail, GuardError } from './stack-identity.mjs';
 import { cloneDataset, selectDataset, inspectDataset, writerSettled } from './stack-data.mjs';
+import { readPrivateJSON, validateMembership } from '../membership.mjs';
 
 const LABEL = 'org.money-seasons.instance';
 export function dockerEnvironment(instance, data = '') {
@@ -23,11 +24,12 @@ export function docker(args, { env = process.env, cwd = checkout, timeout = 120_
   return result.stdout.trim();
 }
 export function composeArgs(instance, args) {
-  return ['compose', '--env-file', '/dev/null', '--project-directory', instance.worktree, '-p', instance.project, '-f', path.join(instance.worktree, 'compose.local.yaml'), ...args];
+  return ['compose', '--env-file', '/dev/null', '--project-directory', instance.worktree, '-p', instance.project, '-f', path.join(instance.worktree, 'compose.local.yaml'), ...(instance.authMode === 'members' ? ['-f', path.join(instance.worktree, 'compose.members.yaml')] : []), ...args];
 }
 export function expectedMounts(instance, data, service) {
   return service === 'web' ? [
-    ['/data', data, true], ['/run/private/passphrase', path.join(instance.base, 'passphrase'), false]
+    ['/data', data, true], ['/run/private/passphrase', path.join(instance.base, 'passphrase'), false],
+    ...(instance.authMode === 'members' ? [['/members', path.join(instance.base, 'members'), true], ['/roles', path.join(instance.base, 'roles'), false]] : [])
   ] : [
     ['/etc/caddy/Caddyfile', path.join(instance.worktree, 'ops/Caddyfile.local'), false], ['/data', path.join(instance.base, 'caddy'), true]
   ];
@@ -77,6 +79,7 @@ export async function inventory(instance, data, run = args => docker(args, { env
   return containers;
 }
 export async function prepareRuntime(instance) {
+  if (instance.authMode === 'members') validateMembership(await readPrivateJSON(path.join(instance.base, 'members/users.json')), await readPrivateJSON(path.join(instance.base, 'roles/roles.json')));
   await privateDir(path.join(instance.base, 'caddy'), true);
   const secret = path.join(instance.base, 'passphrase');
   try { await exclusiveFile(secret, randomBytes(32).toString('base64url') + '\n'); }
@@ -93,7 +96,7 @@ export async function lifecycle(instance, command, { run = docker } = {}) {
   return withInstanceLock(instance, async () => {
     // Reload under the operation lock so a selection completed while waiting cannot be lost.
     const current = JSON.parse((await readPrivate(instance.manifest)).toString('utf8'));
-    if (current.id !== instance.id || current.project !== instance.project || current.port !== instance.port) fail('Instance changed before lifecycle');
+    if (current.id !== instance.id || current.project !== instance.project || current.port !== instance.port || current.authMode !== instance.authMode) fail('Instance changed before lifecycle');
     instance = { ...instance, selected: current.selected };
     const data = command === 'status' && !instance.selected ? '' : await selectedData(instance), env = dockerEnvironment(instance, data);
     const call = args => run(args, { env, cwd: instance.worktree });

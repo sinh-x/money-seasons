@@ -1,6 +1,6 @@
 {
   "name": "money-seasons",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "Private JSON-backed Vietnamese family monthly planning",
@@ -11,7 +11,10 @@
     "start": "node server.mjs",
     "dev": "node --watch server.mjs",
     "test": "node --test",
-    "test:browser": "node scripts/browser-check.mjs && node scripts/browser-check.mjs --prefix",
+    "test:browser": "node scripts/browser-check.mjs && node scripts/browser-check.mjs --prefix && npm run test:members-browser",
+    "test:members-browser": "node scripts/member-browser-check.mjs && node scripts/member-browser-check.mjs --prefix",
+    "uat:init": "node scripts/uat-stack.mjs init",
+    "uat:http": "node scripts/uat-http.mjs",
     "production:config": "node scripts/production-stack.mjs config",
     "production:build": "node scripts/production-stack.mjs build",
     "production:up": "node scripts/production-stack.mjs up",
@@ -24,10 +27,11 @@
     "local:build": "node scripts/local-stack.mjs build",
     "test:isolation": "node scripts/stack-isolation-check.mjs --synthetic-only",
     "test:production-profiles": "node scripts/production-profile-check.mjs",
+    "test:production-members": "node scripts/member-container-check.mjs",
     "local:up": "node scripts/local-stack.mjs up",
     "local:down": "node scripts/local-stack.mjs down",
     "local:status": "node scripts/local-stack.mjs ps",
-    "check": "node --check server.mjs && node --check persistence.mjs && node --check auth.mjs && node --check membership.mjs && node --check household-service.mjs && node --check membership-service.mjs && node --check public/household-model.js && node --check scripts/local-stack.mjs && node --check scripts/production-stack.mjs && node --check scripts/production-profile-check.mjs && node --check scripts/stack-identity.mjs && node --check scripts/stack-data.mjs && node --check scripts/stack-isolation-check.mjs && node --check scripts/stack-browser-checks.mjs && node --check scripts/browser-check.mjs && node --check scripts/browser-server.mjs && node --check scripts/fixture-support.mjs && node --check public/app.js && node --check public/base-path.js && node --check scripts/prefix-proxy.mjs && node --check public/model.js && node --check public/legacy-model.js && node --check public/amount-input.js && node --check public/expense-tags.js"
+    "check": "node --check server.mjs && node --check persistence.mjs && node --check auth.mjs && node --check membership.mjs && node --check household-service.mjs && node --check membership-service.mjs && node --check public/household-model.js && node --check public/member-ui.js && node --check scripts/member-fixture.mjs && node --check scripts/member-browser-check.mjs && node --check scripts/uat-stack.mjs && node --check scripts/uat-http.mjs && node --check scripts/local-stack.mjs && node --check scripts/production-stack.mjs && node --check scripts/production-profile-check.mjs && node --check scripts/member-container-check.mjs && node --check scripts/stack-identity.mjs && node --check scripts/stack-data.mjs && node --check scripts/stack-isolation-check.mjs && node --check scripts/stack-browser-checks.mjs && node --check scripts/browser-check.mjs && node --check scripts/browser-server.mjs && node --check scripts/fixture-support.mjs && node --check public/app.js && node --check public/base-path.js && node --check scripts/prefix-proxy.mjs && node --check public/model.js && node --check public/legacy-model.js && node --check public/amount-input.js && node --check public/expense-tags.js"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.11.1",

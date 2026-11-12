@@ -2,7 +2,9 @@ import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { openStore } from './persistence.mjs';
+import { openStore, openHouseholdStore } from './persistence.mjs';
+import { openMembershipManager } from './membership-service.mjs';
+import { createHouseholdService } from './household-service.mjs';
 import { createAuth, readPassphrase } from './auth.mjs';
 import { MAX_BYTES } from './public/model.js';
 import { validateBasePath } from './public/base-path.js';
@@ -12,6 +14,7 @@ const assets = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/model.js', ['model.js', 'text/javascript; charset=utf-8']],
+  ['/member-ui.js', ['member-ui.js', 'text/javascript; charset=utf-8']],
   ['/base-path.js', ['base-path.js', 'text/javascript; charset=utf-8']],
   ['/demo-data.js', ['demo-data.js', 'text/javascript; charset=utf-8']],
   ['/legacy-model.js', ['legacy-model.js', 'text/javascript; charset=utf-8']],
@@ -86,10 +89,12 @@ export function createServer({ store, household, administration, auth, basePath 
             const value = await household.export(session.member, exports[pathname]);
             res.setHeader('Content-Disposition', 'attachment; filename="money-seasons.json"'); json(200, value); return;
           }
-          if (req.method === 'POST' && ['/api/records', '/api/sharing'].includes(pathname)) {
+          if (req.method === 'GET' && pathname === '/api/migration') { json(200, await household.migration(session.member)); return; }
+          const commands = { '/api/records': 'change', '/api/sharing': 'share', '/api/individual': 'edit', '/api/period': 'period', '/api/migration': 'migrate' };
+          if (req.method === 'POST' && Object.hasOwn(commands, pathname)) {
             const input = await body(req, MAX_BYTES);
             const actor = auth.session(req, true).member; // Body parsing can outlive a revocation.
-            json(200, await household[pathname === '/api/records' ? 'change' : 'share'](actor, input)); return;
+            json(200, await household[commands[pathname]](actor, input)); return;
           }
           // No whole-Home PUT, raw store, foreign-plan or generic patch endpoint.
           throw error('api-method-or-path-not-found', 404);
@@ -113,11 +118,11 @@ export function createServer({ store, household, administration, auth, basePath 
       if (!['GET', 'HEAD'].includes(req.method)) {
         res.writeHead(405, { Allow: 'GET, HEAD' }); res.end(); return;
       }
-      if (pathname === '/healthz') { json(200, { status: 'ok', app: 'money-seasons', version: '0.3.0' }); return; }
+      if (pathname === '/healthz') { json(200, { status: 'ok', app: 'money-seasons', version: '0.4.0' }); return; }
       const asset = assets.get(pathname);
       if (!asset) { res.writeHead(404); res.end('Not found'); return; }
       const raw = await readFile(path.join(root, asset[0]));
-      const data = pathname === '/' ? raw.toString('utf8').replaceAll('{{BASE_PATH}}', escapedPrefix) : raw;
+      const data = pathname === '/' ? raw.toString('utf8').replaceAll('{{BASE_PATH}}', escapedPrefix).replaceAll('{{AUTH_MODE}}', household ? 'members' : 'legacy') : raw;
       res.writeHead(200, { 'Content-Type': asset[1] }); res.end(req.method === 'HEAD' ? undefined : data);
     } catch (e) {
       // Never serialize exception text, payloads, secrets, or filesystem paths.
@@ -131,19 +136,25 @@ export function createServer({ store, household, administration, auth, basePath 
 
 export async function startApplication(env = process.env) {
   const basePath = validateBasePath(env.MONEY_SEASONS_BASE_PATH);
-  const auth = await createAuth({ passphrase: await readPassphrase(env.MONEY_SEASONS_PASSPHRASE_FILE),
-    origins: env.MONEY_SEASONS_ORIGINS?.split(',').map(s => s.trim()), cookieName: env.MONEY_SEASONS_COOKIE_NAME, basePath });
-  const store = await openStore(env.MONEY_SEASONS_DATA_DIR);
-  const server = createServer({ store, auth, basePath });
+  const mode = env.MONEY_SEASONS_AUTH_MODE || 'legacy';
+  if (!['legacy', 'members'].includes(mode)) throw new Error('invalid-auth-mode');
+  let administration, store;
   try {
+    if (mode === 'members') administration = await openMembershipManager(env.MONEY_SEASONS_MEMBERS_DIR, { rolesFile: env.MONEY_SEASONS_ROLES_FILE });
+    const auth = await createAuth({ ...(administration ? { membership: administration } : { passphrase: await readPassphrase(env.MONEY_SEASONS_PASSPHRASE_FILE) }),
+      origins: env.MONEY_SEASONS_ORIGINS?.split(',').map(s => s.trim()), cookieName: env.MONEY_SEASONS_COOKIE_NAME, basePath });
+    store = await (administration ? openHouseholdStore : openStore)(env.MONEY_SEASONS_DATA_DIR, { allowMigration: !!administration });
+    const household = administration ? createHouseholdService({ store, membership: administration }) : undefined;
+    const server = createServer({ store, household, administration, auth, basePath });
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(Number(env.PORT || 3080), env.HOST || '127.0.0.1', resolve); });
-  } catch (e) { await store.close(); throw e; }
-  return { server, async close() { await new Promise(resolve => server.close(resolve)); await store.close(); } };
+    return { server, reloadRoles: async () => administration?.reloadRoles(), async close() { await new Promise(resolve => server.close(resolve)); await store.close(); await administration?.close(); } };
+  } catch (e) { await store?.close(); await administration?.close(); throw e; }
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const app = await startApplication();
     console.log('Money Seasons listening; private HTTPS proxy required.');
+    process.on('SIGHUP', () => { app.reloadRoles().catch(() => console.error('Private role reload refused; member access fails closed.')); });
     let stopping = false;
     for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, async () => {
       if (!stopping) { stopping = true; await app.close(); }

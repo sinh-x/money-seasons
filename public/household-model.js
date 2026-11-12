@@ -94,6 +94,30 @@ export function projectIndividual(source, actorId) {
   if (!individual) fail();
   return { scope: 'individual', ...individual };
 }
+// A whole-plan editor is owner-only. Existing privacy survives both edits and
+// confirmed imports; new parents default shared. No ownership or roles in input.
+export function replaceIndividual(source, actorId, candidate, { replace = false } = {}) {
+  const next = validateHousehold(source), plan = validatePlan(candidate);
+  if (plan.startMonth !== next.startMonth || plan.endMonth !== next.endMonth) fail();
+  const old = next.individuals.find(p => p.ownerId === actorId);
+  if (!replace && old) for (const [kind, history] of [['accounts', 'snapshots'], ['debtAccounts', 'debtSnapshots']]) {
+    if (old.plan[kind].some(a => !plan[kind].some(b => b.id === a.id) && old.plan[history].some(s => s.accountId === a.id))) fail();
+  }
+  const own = individualPlan(actorId, plan);
+  for (const kind of parents) for (const permission of own.sharing[kind]) {
+    permission.shared = old?.sharing[kind].find(p => p.id === permission.id)?.shared ?? true;
+  }
+  if (old) next.individuals[next.individuals.indexOf(old)] = own;
+  else next.individuals.push(own);
+  return validateHousehold(next);
+}
+export function setPeriod(source, startMonth, endMonth) {
+  const next = validateHousehold(source);
+  monthRange(startMonth, endMonth);
+  Object.assign(next, { startMonth, endMonth });
+  for (const owner of next.individuals) Object.assign(owner.plan, { startMonth, endMonth });
+  return validateHousehold(next);
+}
 export function setSharing(source, actorId, ownerId, kind, recordId, shared) {
   if (actorId !== ownerId || !validOwner(actorId) || !parents.includes(kind) || typeof shared !== 'boolean') fail();
   const next = validateHousehold(source), owner = next.individuals.find(member => member.ownerId === ownerId);
