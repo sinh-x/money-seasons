@@ -15,7 +15,7 @@ function shape(value, keys) {
 }
 const identifier = value => typeof value === 'string' && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(value);
 const positive = value => Number.isSafeInteger(value) && value >= 1;
-const passwordInput = value => typeof value === 'string' && value.length >= 12 && Buffer.byteLength(value) <= 1024;
+const passwordInput = value => typeof value === 'string' && value.length >= 6 && Buffer.byteLength(value) <= 1024;
 function validateVerifier(value) {
   shape(value, ['algorithm', 'salt', 'key']);
   if (value.algorithm !== 'scrypt' || typeof value.salt !== 'string' || !/^[a-f0-9]{64}$/.test(value.salt) ||

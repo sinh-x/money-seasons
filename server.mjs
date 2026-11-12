@@ -118,7 +118,7 @@ export function createServer({ store, household, administration, auth, basePath 
       if (!['GET', 'HEAD'].includes(req.method)) {
         res.writeHead(405, { Allow: 'GET, HEAD' }); res.end(); return;
       }
-      if (pathname === '/healthz') { json(200, { status: 'ok', app: 'money-seasons', version: '0.4.0' }); return; }
+      if (pathname === '/healthz') { json(200, { status: 'ok', app: 'money-seasons', version: '0.4.1' }); return; }
       const asset = assets.get(pathname);
       if (!asset) { res.writeHead(404); res.end('Not found'); return; }
       const raw = await readFile(path.join(root, asset[0]));
