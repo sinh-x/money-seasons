@@ -1,14 +1,29 @@
 # Money Seasons — ticket index and historical drafts
 
-**Status: requirements ticket MS-001 created. Sinh accepted the mockup/local Docker foundation; full MVP implementation is not approved.**
+**Current: MS-001 has a four-phase implementation candidate following Sinh's explicit resume/per-phase-commit request.** It uses the revised r002/v003 scope. Local code/checks do not imply native package promotion, independent review, production rollout or human UAT. See [development plan](development-plan.md) and [current evidence](verification.md).
+
+## MS-001 reconciliation (supersedes historical assumptions below)
+
+The canonical ticket is still **MS-001**; no new PA tickets or duplicate implementation backlog were created. Its launch status was `requirement-review`, with an unresolved publication-only `WORKFLOW_SOURCE` blocker. This implementation does not rewrite preserved r001/r002 review artifacts or claim ordinary workflow readiness. Canonical ticket status/owner remain unchanged by code commits. See [current development plan](development-plan.md), [implementation details](ms-001.md), and [operating guide](../README.md).
+
+| Historical reference | Resolved scope in this candidate | Intentionally not claimed |
+|---|---|---|
+| MS-D01/D04 rules/model | Configurable year-month windows, correct known totals, unknown/zero, tentative comparison, anchored recurrence, estimate history, date-effective pooled snapshots | Accounting, automatic debt calculations, noncash inventory |
+| MS-D02/D05 setup | Shared typed objects and dated cash/debt accounts; shared passphrase replaces no-login assumption | Personal login roles, membership or a transaction ledger |
+| MS-D06 map/edit | Five workspaces, grouped monthly table/cards/detail, confirmed forward estimates, reference dates | Human flow acceptance |
+| MS-D07 actual/review | **Superseded:** no active actual entry. Legacy actuals retained in original exports/archives, excluded only through disclosed confirmed conversion | Restoring the old actual workflow or deleting legacy records silently |
+| MS-D03/D09 recovery/hardening | Private durable revisioned JSON/auth API; retained v1/v2 originals and confirmed conversion; synthetic regressions | Browser-only/no-API assumptions; production/private-network qualification or UAT |
+| MS-D08 targets | **Deferred.** Cash/debt snapshots are implemented separately, not preparation targets or net-worth accounting. Databases and automatic/off-machine backups remain deferred. | Target/interest/amortization automation |
+
+**Everything below is the retained foundation-era draft history, not the current backlog/status or an execution instruction.** Its no-auth/browser-only statements are superseded by MS-001's server JSON/shared family passphrase decisions. Unchecked historical criteria are not wholesale approved or marked complete.
 
 ## Active requirements ticket
 
 | PA ID | Title | Status | Owner |
 |---|---|---|---|
-| **MS-001** | Gather Sinh's usage requirements for November 2026–December 2027 planning | idea — requirements/input first | sinh |
+| **MS-001** | Gather Sinh's usage requirements for November 2026–December 2027 planning | requirement-review at discovery; local rogue-one candidate does not promote native status | requirements/team-manager (Sinh is decision owner) |
 
-View the canonical ticket with `ppa ticket show MS-001`. It covers personal input needs and usage adjustments for a continuous **14-month** plan, including opening-balance reference, cross-year carry-forward/recurrence/actuals, and safe preservation of existing 2027 data. This is a requirements ticket, not implementation authorization. Keep personal financial values in an agreed private location, not in Git or PA ticket content. Do not duplicate the ticket's acceptance criteria here.
+View the canonical ticket with `ppa ticket show MS-001`. The revised r002 scope covers a continuous **14-month** plan, shared objects, amount shorthand, dated cash/debt balances, cross-year schedules/estimates and safe legacy preservation. The ticket/draft alone is not implementation authorization; this session's direct user request separately authorized rogue-one implementation and phase commits. Keep personal financial values in an agreed private location, not in Git or PA ticket content. Do not duplicate the ticket's acceptance criteria here.
 
 Saved foundation: commit `ca0fda1`, annotated tag `foundation-v0.1`. No other draft has been converted.
 

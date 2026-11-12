@@ -1,5 +1,10 @@
 **
 !package.json
 !server.mjs
+!persistence.mjs
+!auth.mjs
+!membership.mjs
+!membership-service.mjs
+!household-service.mjs
 !public/
 !public/**

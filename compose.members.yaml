@@ -1,0 +1,19 @@
+# Explicit member-mode overlay; only the scoped CLI selects this from private manifest.
+services:
+  web:
+    environment:
+      MONEY_SEASONS_AUTH_MODE: members
+      MONEY_SEASONS_MEMBERS_DIR: /members
+      MONEY_SEASONS_ROLES_FILE: /roles/roles.json
+    volumes:
+      - type: bind
+        source: ${MS_DEV_STATE:?}/members
+        target: /members
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${MS_DEV_STATE:?}/roles
+        target: /roles
+        read_only: true
+        bind:
+          create_host_path: false
