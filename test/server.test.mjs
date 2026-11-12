@@ -15,7 +15,7 @@ const put = (headers, expectedRevision, plan, extras = {}) => fetch(`${base}/api
   body: JSON.stringify({ expectedRevision, plan, operation: 'replace', confirmed: true, ...extras }) });
 
 test('health/assets/HEAD retain types and safety headers; private files never served', async () => {
-  assert.deepEqual(await (await fetch(`${base}/healthz`)).json(), { status: 'ok', app: 'money-seasons', version: '0.4.0' });
+  assert.deepEqual(await (await fetch(`${base}/healthz`)).json(), { status: 'ok', app: 'money-seasons', version: '0.4.1' });
   for (const [url, type] of [['/', 'text/html'], ['/app.js', 'text/javascript'], ['/model.js', 'text/javascript'], ['/demo-data.js', 'text/javascript'], ['/expense-tags.js', 'text/javascript'], ['/styles.css', 'text/css'], ['/favicon.svg', 'image/svg+xml']]) {
     const r = await fetch(`${base}${url}`);
     assert.equal(r.status, 200); assert.ok(r.headers.get('content-type').startsWith(type));

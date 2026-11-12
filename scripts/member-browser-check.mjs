@@ -78,7 +78,7 @@ try {
       const report = await new AxeBuilder({ page: lan }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
       assert.deepEqual(report.violations.map(v => ({ id: v.id, targets: v.nodes.map(n => n.target) })), [], `${width}/${view}`);
     }
-    await lan.locator('#password-button').click(); await lan.locator('[name=currentPassword]').waitFor({ state: 'visible' }); await close(lan);
+    await lan.locator('#password-button').click(); await lan.locator('[name=currentPassword]').waitFor({ state: 'visible' }); assert.equal(await lan.locator('#edit-form [name=password]').getAttribute('minlength'), '6'); await close(lan);
   }
   await lan.locator('#logout-button').click(); await confirm(lan); await lan.locator('#access-panel').waitFor({ state: 'visible' });
   assert.equal(await lan.locator('#workspace').textContent(), '');

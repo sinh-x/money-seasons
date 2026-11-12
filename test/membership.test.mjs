@@ -53,6 +53,24 @@ test('durable user management is admin-only, strictly shaped and revokes credent
   finally { await reopened.close(); }
 });
 
+test('six-character member password boundary applies to hashing, durable create/reset and own change', async t => {
+  const six = 'sixchr', five = 'short';
+  await assert.rejects(hashPassword(five), { message: 'invalid-password' });
+  const boundary = await hashPassword(six);
+  assert.equal(await verifyPassword(six, boundary), true);
+  const { manager: m, root } = await durableFixture(t);
+  const before = await readFile(path.join(root, 'users.json'));
+  await assert.rejects(m.manage(m.current('lan'), { action: 'reset', expectedRevision: 1, id: 'minh', password: five }), e => e.status === 400);
+  assert.deepEqual(await readFile(path.join(root, 'users.json')), before);
+  await m.manage(m.current('lan'), { action: 'reset', expectedRevision: 1, id: 'minh', password: six });
+  const member = await m.authenticate('minh', six);
+  await m.password(member, { expectedRevision: 2, currentPassword: six, password: 'newpwd' });
+  await assert.rejects(m.authenticate('minh', six));
+  assert.equal((await m.authenticate('minh', 'newpwd')).id, 'minh');
+  await m.manage(m.current('lan'), { action: 'create', expectedRevision: 3, id: 'anh', username: 'anh', name: 'Synthetic six', password: six });
+  assert.equal((await m.authenticate('anh', six)).id, 'anh');
+});
+
 test('own password change verifies current password and revisions; role reload is private and invalidates old epochs', async t => {
   const { manager: m, root, rolesFile } = await durableFixture(t);
   const minh = m.current('minh'), lan = m.current('lan');

@@ -39,8 +39,8 @@ export function memberDialogs({ api, member, openEditor, field, h, confirmChange
   return {
     async password() {
       const own = await api('/api/member');
-      openEditor('Đổi mật khẩu của tôi', 'Tối thiểu 12 ký tự. Phiên cũ bị thu hồi sau khi lưu.',
-        field('Mật khẩu hiện tại', '<input name="currentPassword" type="password" autocomplete="current-password" required>', '', true) + field('Mật khẩu mới', '<input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="1024" required>', '', true),
+      openEditor('Đổi mật khẩu của tôi', 'Tối thiểu 6 ký tự. Phiên cũ bị thu hồi sau khi lưu.',
+        field('Mật khẩu hiện tại', '<input name="currentPassword" type="password" autocomplete="current-password" required>', '', true) + field('Mật khẩu mới', '<input name="password" type="password" autocomplete="new-password" minlength="6" maxlength="1024" required>', '', true),
         async f => { await api('/api/password', { method: 'POST', body: JSON.stringify({ expectedRevision: own.revision, currentPassword: f.currentPassword.value, password: f.password.value }) }); clear(); toast('Đã đổi mật khẩu. Đăng nhập lại.'); });
     },
     async users() {
@@ -48,7 +48,7 @@ export function memberDialogs({ api, member, openEditor, field, h, confirmChange
       openEditor('Quản lý thành viên', 'Quyền admin do cấu hình riêng của người vận hành. Đặt lại mật khẩu là quyền tin cậy; admin không có quyền đọc tài chính riêng qua API.',
         `<div class="field full"><ul>${state.users.map(u => `<li>${h(u.name)} · ${h(u.id)} · ${u.admin ? 'Admin' : 'Thành viên'} · ${u.enabled ? 'Hoạt động' : 'Đã khóa'}</li>`).join('')}</ul></div>` +
         field('Thao tác', '<select name="action"><option value="create">Tạo thành viên</option><option value="reset">Đặt lại mật khẩu</option><option value="disable">Khóa truy cập</option><option value="enable">Mở lại truy cập</option></select>') +
-        field('Mã thành viên', '<input name="id" pattern="[a-z0-9][a-z0-9_-]{0,63}" required>') + field('Tên đăng nhập (khi tạo)', '<input name="username" maxlength="64">') + field('Tên hiển thị (khi tạo)', '<input name="name" maxlength="80">') + field('Mật khẩu mới (tạo / đặt lại)', '<input name="password" type="password" autocomplete="new-password" maxlength="1024">', '', true),
+        field('Mã thành viên', '<input name="id" pattern="[a-z0-9][a-z0-9_-]{0,63}" required>') + field('Tên đăng nhập (khi tạo)', '<input name="username" maxlength="64">') + field('Tên hiển thị (khi tạo)', '<input name="name" maxlength="80">') + field('Mật khẩu mới (tạo / đặt lại)', '<input name="password" type="password" autocomplete="new-password" maxlength="1024">', 'Tối thiểu 6 ký tự khi tạo hoặc đặt lại.', true),
         async f => {
           const action = f.action.value, input = { expectedRevision: state.revision, id: f.id.value, action: ['disable', 'enable'].includes(action) ? 'access' : action,
             ...(action === 'create' ? { username: f.username.value, name: f.name.value, password: f.password.value } : action === 'reset' ? { password: f.password.value } : { enabled: action === 'enable' }) };
