@@ -40,7 +40,7 @@ function owned() {
 let configured = false, qualified = false;
 try {
  for (const dir of ['docker-config', 'data', 'members', 'roles', 'caddy']) await fs.mkdir(path.join(directory, dir), { mode: 0o700 });
- const password = randomBytes(24).toString('base64url'), verifier = await hashPassword(password);
+ const password = randomBytes(3).toString('hex'), verifier = await hashPassword(password); // Six-character policy boundary.
  await fs.writeFile(path.join(directory, 'members/users.json'), JSON.stringify({ version: 1, revision: 1, users: ['lan', 'minh'].map(id => ({ id, username: id, name: id, enabled: true, credentialVersion: 1, password: verifier })) }), { mode: 0o600, flag: 'wx' });
  await fs.writeFile(path.join(directory, 'roles/roles.json'), JSON.stringify({ version: 1, adminIds: ['minh'] }), { mode: 0o600, flag: 'wx' });
  const finance = JSON.stringify({ schemaVersion: 'money-seasons-household/v1', revision: 1, household: syntheticHousehold() });
