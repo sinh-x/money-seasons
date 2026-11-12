@@ -262,4 +262,9 @@ input[type=checkbox] { accent-color: var(--green); }
 .expense-tag-bundle [data-add-tag] { justify-self: start; }
 [data-money-only] { min-width: 0; }
 @media (max-width: 760px) { .grouping-slots { grid-template-columns: 1fr; } .expense-children { padding: 0 6px 8px; } .expense-group .object-header { padding: 12px; } .expense-group .detail-row { padding: 12px; } .month-context { align-items: flex-start; } }
+.owner-label { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; max-width: 100%; overflow-wrap: anywhere; font-size: 12px; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+#member-bar { flex-wrap: wrap; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--white); }
+#member-bar [aria-pressed=true] { background: var(--leaf); font-weight: 700; }
+#freshness { overflow-wrap: anywhere; font-size: 12px; }
+.migration-preview { max-width: 100%; max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media print { .sidebar, .top-actions, .heading-actions, .button, .toast { display: none; } .shell, .workspace { display: block; } .table-scroll { overflow: visible; max-height: none; } main { padding: 10px; } }

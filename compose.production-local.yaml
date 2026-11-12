@@ -11,6 +11,7 @@ services:
         org.money-seasons.source: ${MONEY_SEASONS_PRODUCTION_REPO:?Use the canonical checkout}
         org.opencontainers.image.revision: ${MONEY_SEASONS_RELEASE:?}
     environment:
+      MONEY_SEASONS_AUTH_MODE: ${MONEY_SEASONS_AUTH_MODE:-legacy}
       MONEY_SEASONS_COOKIE_NAME: ${MONEY_SEASONS_COOKIE_NAME:-ms_session}
     labels: *production-labels
   caddy:

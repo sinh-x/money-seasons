@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAuth, readPassphrase } from '../auth.mjs';
+import { createMembershipDirectory, hashPassword } from '../membership.mjs';
 import { mkdtemp, writeFile, chmod, rm, symlink } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -68,6 +69,43 @@ test('host/origin/fetch-site spoof denied; missing origin on writes denied', asy
   await assert.rejects(createAuth({ passphrase: secret, origins: ['http://localhost:3080'] }));
   await assert.rejects(createAuth({ passphrase: secret, origins: [origin + '/path'] }));
   await assert.rejects(createAuth({ passphrase: secret, origins: ['http://public.test'], secure: false }));
+});
+
+test('member sessions bind current identity and revoke across roles/password/disable without bypassing CSRF', async () => {
+  const password = await hashPassword(secret);
+  const users = { version: 1, revision: 1, users: ['lan', 'minh'].map(id => ({ id, username: id, name: id, enabled: true, credentialVersion: 1, password })) };
+  const roles = { version: 1, adminIds: ['lan'] }, membership = createMembershipDirectory(users, roles);
+  const auth = await createAuth({ membership, origins: [origin], basePath: '/lichtaichinh' });
+  const login = await auth.login(request(), { username: 'lan', password: secret });
+  const req = request('127.0.0.1', { cookie: login.cookie.split(';')[0], 'x-csrf-token': login.csrf });
+  assert.equal(auth.session(req, true).member.id, 'lan'); assert.equal(login.member.admin, true);
+  assert.doesNotMatch(JSON.stringify(login.member), /password|salt|key/);
+  assert.match(login.cookie, /Path=\/lichtaichinh\/; HttpOnly; SameSite=Strict/);
+  assert.throws(() => auth.session(request('127.0.0.1', { cookie: req.headers.cookie }), true), e => e.status === 403);
+  membership.replace(users, { version: 1, adminIds: ['minh'] });
+  assert.throws(() => auth.session(req), e => e.status === 401);
+  membership.replace(users, roles); assert.throws(() => auth.session(req), e => e.status === 401);
+  const again = await auth.login(request(), { username: 'lan', password: secret });
+  req.headers.cookie = again.cookie.split(';')[0]; req.headers['x-csrf-token'] = again.csrf;
+  users.users[0].credentialVersion++;
+  membership.replace(users, roles); assert.throws(() => auth.session(req), e => e.status === 401);
+  const third = await auth.login(request(), { username: 'lan', password: secret });
+  req.headers.cookie = third.cookie.split(';')[0];
+  users.users[0].enabled = false; membership.replace(users, { version: 1, adminIds: ['minh'] });
+  assert.throws(() => auth.session(req), e => e.status === 401);
+  await assert.rejects(auth.login(request(), { username: 'lan', password: secret }), e => e.status === 401);
+  await assert.rejects(auth.login(request(), { username: 'minh', password: secret, admin: true }), e => e.status === 401);
+  await assert.rejects(createAuth({ membership, passphrase: secret, origins: [origin] }));
+});
+
+test('member login attempts share existing rate limits and origin boundary', async () => {
+  const password = await hashPassword(secret), users = { version: 1, revision: 1, users: [{ id: 'lan', username: 'lan', name: 'Lan', enabled: true, credentialVersion: 1, password }] };
+  const membership = createMembershipDirectory(users, { version: 1, adminIds: ['lan'] });
+  const auth = await createAuth({ membership, origins: [origin] });
+  await assert.rejects(auth.login(request('bad', { origin: 'https://evil.test' }), { username: 'lan', password: secret }), e => e.status === 403);
+  const results = await Promise.allSettled(Array.from({ length: 10 }, () => auth.login(request(), { username: 'absent', password: 'wrong' })));
+  assert.equal(results.filter(r => r.reason.status === 401).length, 5);
+  assert.equal(results.filter(r => r.reason.status === 429).length, 5);
 });
 
 test('private passphrase file only, bounded and not symlinked', async t => {

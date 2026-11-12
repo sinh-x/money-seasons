@@ -17,12 +17,14 @@ export async function readPassphrase(filename) {
     return (await file.readFile('utf8')).replace(/\r?\n$/, '');
   } finally { await file.close(); }
 }
-export async function createAuth({ passphrase, origins, secure = true, now = Date.now, cookieName = 'ms_session', basePath = '' }) {
+export async function createAuth({ passphrase, membership, origins, secure = true, now = Date.now, cookieName = 'ms_session', basePath = '' }) {
   validateBasePath(basePath);
   if (cookieName !== 'ms_session' && !/^ms_dev_[a-f0-9]{64}$/.test(cookieName)) throw new Error('Invalid instance cookie namespace');
   if (basePath) cookieName = 'ms_path_' + createHash('sha256').update(cookieName + '\0' + basePath).digest('hex');
   const cookiePrefix = `${cookieName}=`;
-  if (typeof passphrase !== 'string' || passphrase.length < 12 || Buffer.byteLength(passphrase) > 1024) throw new Error('Passphrase must be 12–1024 bytes');
+  if (membership !== undefined) {
+    if (passphrase !== undefined || !membership || typeof membership.authenticate !== 'function' || typeof membership.current !== 'function') throw new Error('Exclusive membership provider required');
+  } else if (typeof passphrase !== 'string' || passphrase.length < 12 || Buffer.byteLength(passphrase) > 1024) throw new Error('Passphrase must be 12–1024 bytes');
   if (!Array.isArray(origins) || !origins.length) throw new Error('Explicit allowed origins required');
   const allowed = new Set(origins.map(value => {
     const url = new URL(value);
@@ -32,7 +34,7 @@ export async function createAuth({ passphrase, origins, secure = true, now = Dat
     return value;
   }));
   const hosts = new Set([...allowed].map(o => new URL(o).host));
-  const salt = randomBytes(32), verifier = await scrypt(passphrase, salt, 64);
+  const salt = membership ? undefined : randomBytes(32), verifier = membership ? undefined : await scrypt(passphrase, salt, 64);
   passphrase = undefined;
   const sessions = new Map(), attempts = [];
   const tokenHash = token => createHash('sha256').update(token).digest('hex');
@@ -54,8 +56,18 @@ export async function createAuth({ passphrase, origins, secure = true, now = Dat
     if (!/^[a-f0-9]{64}$/.test(token)) throw new AuthError('login-required', 401);
     const entry = sessions.get(tokenHash(token));
     if (!entry) throw new AuthError('login-required', 401);
+    let member;
+    if (membership) {
+      try {
+        member = membership.current(entry.member.id);
+        if (member.authEpoch !== entry.member.authEpoch) throw new Error('revoked');
+      } catch {
+        sessions.delete(tokenHash(token));
+        throw new AuthError('login-required', 401);
+      }
+    }
     if (mutation && req.headers['x-csrf-token'] !== entry.csrf) throw new AuthError('csrf-denied', 403);
-    return entry;
+    return { ...entry, ...(member ? { member } : {}) };
   }
   const cookie = (token, age = LIFETIME / 1000) => `${cookieName}=${token}; Path=${basePath}/; HttpOnly; SameSite=Strict; Max-Age=${age}${secure ? '; Secure' : ''}`;
   return {
@@ -65,15 +77,26 @@ export async function createAuth({ passphrase, origins, secure = true, now = Dat
       const address = req.socket.remoteAddress; // Never trust X-Forwarded-For.
       if (attempts.length >= 30 || attempts.filter(a => a.address === address).length >= 5) throw new AuthError('login-rate-limited', 429);
       const attempt = { address, time: now() }; attempts.push(attempt); // Reserve before asynchronous derivation.
-      if (typeof input !== 'string' || Buffer.byteLength(input) > 1024) throw new AuthError('invalid-login', 401);
-      const candidate = await scrypt(input, salt, 64);
-      if (!timingSafeEqual(candidate, verifier)) throw new AuthError('invalid-login', 401);
+      let member;
+      if (membership) {
+        if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).length !== 2 ||
+            !Object.hasOwn(input, 'username') || !Object.hasOwn(input, 'password')) throw new AuthError('invalid-login', 401);
+        try {
+          const verified = await membership.authenticate(input.username, input.password);
+          member = membership.current(verified.id);
+          if (member.authEpoch !== verified.authEpoch) throw new Error('revoked');
+        } catch { throw new AuthError('invalid-login', 401); }
+      } else {
+        if (typeof input !== 'string' || Buffer.byteLength(input) > 1024) throw new AuthError('invalid-login', 401);
+        const candidate = await scrypt(input, salt, 64);
+        if (!timingSafeEqual(candidate, verifier)) throw new AuthError('invalid-login', 401);
+      }
       const index = attempts.indexOf(attempt); if (index !== -1) attempts.splice(index, 1);
       prune();
       if (sessions.size >= 256) throw new AuthError('session-capacity', 503);
       const token = randomBytes(32).toString('hex'), csrf = randomBytes(32).toString('hex');
-      sessions.set(tokenHash(token), { csrf, expires: now() + LIFETIME });
-      return { csrf, cookie: cookie(token) };
+      sessions.set(tokenHash(token), { csrf, expires: now() + LIFETIME, ...(member ? { member: { ...member } } : {}) });
+      return { csrf, cookie: cookie(token), ...(member ? { member: { ...member } } : {}) };
     },
     logout(req) {
       session(req, true);

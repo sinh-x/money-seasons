@@ -123,7 +123,7 @@ export async function loadInstance({ root = checkout, home = os.homedir(), port,
   try {
     const state = JSON.parse((await readPrivate(manifest)).toString('utf8'));
     for (const [key, value] of Object.entries(identity)) if (state[key] !== value) fail('Foreign/replaced worktree manifest refused');
-    if (state.version !== 1 || devPort(state.port) !== state.port || (port !== undefined && devPort(port) !== state.port)) fail('Manifest/port mismatch; port changes require a separate instance');
+    if ((state.authMode !== undefined && state.authMode !== 'members') || state.version !== 1 || devPort(state.port) !== state.port || (port !== undefined && devPort(port) !== state.port)) fail('Manifest/port mismatch; port changes require a separate instance');
     if (state.selected !== null && (typeof state.selected !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(state.selected))) fail('Invalid selected dataset');
     existing = state;
   } catch (e) {

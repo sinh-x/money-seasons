@@ -2,6 +2,15 @@
 
 This is the tracked production Docker path, not `local:*` or a private preview snapshot. It runs `compose.yaml` plus `compose.production-local.yaml` from the **canonical checkout on main**, with a private environment file and immutable revision-tagged production images. MS-003 adds two supported profiles below. These source changes do **not** update the running installation: the last operator-reported deployment was root-local **https://localhost:3443**. Full private-tailnet integration still requires application release/deployment, DFC-003 gateway cutover and real device/UAT evidence. No LAN/public/Funnel access or automatic host trust changes.
 
+## MS-005 / 0.4.0 member mode
+
+See [the 0.4.0 release/cutover plan](release-0.4.0.md) for the explicitly requested
+promotion of the current 3086 private review copy, fresh production credentials,
+separate member/role storage and rollback boundaries. The tracked member overlay
+is selected only by private `MONEY_SEASONS_AUTH_MODE=members`; no automatic
+migration or copy is performed by production lifecycle commands. Existing
+root/prefix HTTPS/security profiles and canonical clean-main requirements remain.
+
 ## Promotion and configuration
 
 1. Verify a scoped feature/release candidate using Node, browser and synthetic Docker checks; keep source changes on a feature/release branch. Local tests do not issue native workflow approvals or human UAT.

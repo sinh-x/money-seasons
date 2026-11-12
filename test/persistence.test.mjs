@@ -4,10 +4,62 @@ import * as fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { openStore } from '../persistence.mjs';
+import { openStore, openHouseholdStore } from '../persistence.mjs';
+import { blankHousehold, individualPlan } from '../public/household-model.js';
 import { blankPlan, convertLegacy, validatePlan } from '../public/model.js';
 import { blankPlan as legacyBlank } from '../public/legacy-model.js';
 import { tagLibrary } from '../public/expense-tags.js';
+
+test('household transactions reuse private durable CAS, reject legacy bytes and preserve original', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ms-household-store-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const store = await openHouseholdStore(root); t.after(() => store.close());
+  const initial = { ...blankHousehold(), individuals: [individualPlan('lan', blankPlan())] };
+  const saved = await store.transact(0, () => initial);
+  assert.deepEqual(saved.household, initial); assert.equal(saved.revision, 1);
+  await assert.rejects(store.transact(0, () => initial), e => e.status === 409);
+  await assert.rejects(store.transact(1, () => ({ ...initial, password: 'forged' })), e => e.status === 400);
+  assert.deepEqual(await store.read(), saved);
+  await assert.rejects(openStore(root), /writer-lock/);
+  await store.close();
+  const reopened = await openHouseholdStore(root);
+  try { assert.deepEqual(await reopened.read(), saved); } finally { await reopened.close(); }
+  const original = JSON.stringify({ schemaVersion: 'money-seasons-store/v1', revision: 1, plan: blankPlan() });
+  await fs.writeFile(path.join(root, 'plan.json'), original, { mode: 0o600 });
+  await assert.rejects(openHouseholdStore(root), /store-unavailable/);
+  assert.equal(await fs.readFile(path.join(root, 'plan.json'), 'utf8'), original);
+});
+
+test('household source exceeding one individual byte/list cap is retained, never truncated', async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ms-household-size-'));
+  const store = await openHouseholdStore(root);
+  t.after(async () => { await store.close(); await fs.rm(root, { recursive: true, force: true }); });
+  const plan = blankPlan(); plan.objects = [{ id: 'object', name: 'Synthetic', type: 'person' }];
+  plan.items = Array.from({ length: 500 }, (_, n) => ({ id: `item-${n}`, objectId: 'object', name: 'Synthetic', description: 'x'.repeat(500), type: 'income', status: 'confirmed', amount: 0,
+    recurrence: { kind: 'once', anchor: '2026-11', end: '2026-11', everyMonths: 1 }, amountChanges: [] }));
+  const household = { ...blankHousehold(), individuals: ['lan', 'minh', 'anh'].map(id => individualPlan(id, plan)) };
+  assert.ok(Buffer.byteLength(JSON.stringify(household)) > 1_000_000);
+  const saved = await store.transact(0, () => household);
+  assert.deepEqual((await store.read()).household, saved.household);
+  assert.equal(saved.household.individuals.reduce((n, p) => n + p.plan.items.length, 0), 1500);
+});
+
+for (const point of ['before-write', 'before-file-sync', 'before-rename', 'after-rename', 'after-directory-sync']) {
+  test(`household transaction fault at ${point} is never acknowledged or partially persisted`, async t => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ms-household-fault-'));
+    let inject = false;
+    const store = await openHouseholdStore(root, { hook: async stage => { if (inject && stage === point) throw new Error('synthetic'); } });
+    t.after(async () => { await store.close(); await fs.rm(root, { recursive: true, force: true }); });
+    await store.transact(0, () => blankHousehold()); inject = true;
+    await assert.rejects(store.transact(1, h => ({ ...h, endMonth: '2027-11' })), e => e.status === 503);
+    const renamed = point.startsWith('after-'), state = await store.read();
+    assert.equal(state.revision, renamed ? 2 : 1);
+    assert.equal(state.household.endMonth, renamed ? '2027-11' : '2027-12');
+    inject = false;
+    if (renamed) await assert.rejects(store.transact(2, h => h), /uncertain/);
+    else assert.equal((await store.transact(1, h => h)).revision, 2);
+  });
+}
 
 async function fixture(t, options) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ms-store-'));

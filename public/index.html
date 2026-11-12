@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="vi" data-base-path="{{BASE_PATH}}">
+<html lang="vi" data-base-path="{{BASE_PATH}}" data-auth-mode="{{AUTH_MODE}}">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#244d40"><title>Money Seasons · Kế hoạch gia đình</title>
@@ -10,8 +10,8 @@
   <a class="skip" href="#main">Đến nội dung chính</a>
   <section id="access-panel" class="access-panel" aria-labelledby="access-title">
     <h1 id="access-title">Money Seasons</h1><p>Cùng hiểu · cùng lên kế hoạch. Một kế hoạch riêng tư trên laptop gia đình.</p>
-    <form id="login-form"><label class="field">Cụm mật khẩu gia đình<input name="passphrase" type="password" autocomplete="current-password" required maxlength="1024"></label><p id="login-error" class="form-error" role="alert" hidden></p><button class="button primary" type="submit">Đăng nhập</button></form>
-    <p>Chỉ truy cập qua HTTPS riêng tư. Mọi thành viên được phép xem và sửa cùng kế hoạch.</p>
+    <form id="login-form"><label class="field" id="username-field" hidden>Tên đăng nhập<input name="username" autocomplete="username" maxlength="64"></label><label class="field">Cụm mật khẩu gia đình<input name="passphrase" type="password" autocomplete="current-password" required maxlength="1024"></label><p id="login-error" class="form-error" role="alert" hidden></p><button class="button primary" type="submit">Đăng nhập</button></form>
+    <p id="access-note">Chỉ truy cập qua HTTPS riêng tư. Mọi thành viên được phép xem và sửa cùng kế hoạch.</p>
   </section>
   <div class="shell" id="application" hidden>
     <aside class="sidebar"><a href="{{BASE_PATH}}/" class="brand"><span class="brand-mark" aria-hidden="true">◒</span><span>money<br>seasons<small>Cùng hiểu · cùng lên kế hoạch</small></span></a>
@@ -27,11 +27,12 @@
     <div class="main-area">
       <header class="topbar"><span class="breadcrumb" id="plan-title"></span><div class="top-actions"><button class="button small" id="settings-button">Chỉnh kế hoạch</button><button class="button small" id="export-button">Xuất JSON ↓</button><button class="button small" id="import-button">Nhập JSON ↑</button><button class="button small" id="help-button">Hướng dẫn</button><button class="button small" id="logout-button">Đăng xuất</button></div></header>
       <main id="main" tabindex="-1">
+        <section id="member-bar" class="controls" aria-label="Cá nhân và Home" hidden><strong id="member-name"></strong><button class="button" id="my-button">Của tôi</button><button class="button" id="home-button">Home · Chia sẻ</button><span id="freshness" role="status"></span><button class="button" id="password-button">Đổi mật khẩu</button><button class="button" id="users-button" hidden>Quản lý thành viên</button><button class="button" id="period-button" hidden>Kỳ dự báo chung</button><button class="button" id="migration-button" hidden>Chuyển dữ liệu · chọn chủ sở hữu</button></section>
         <p id="save-status" role="status"></p><p id="storage-warning" class="info amber" role="alert" hidden></p>
         <div id="save-recovery" class="controls-left" hidden><button class="button" id="reconcile-button">Đọc lại trạng thái lưu</button><button class="button" id="reload-button">Nạp bản máy chủ</button><button class="button" id="retry-button" hidden>Thử lưu lại</button></div>
         <button class="button" id="legacy-button" hidden>Chuyển nguyên bản v1/v2…</button>
         <div id="workspace"></div>
-        <footer class="page-footer"><span>VND · Theo tháng · Không phải tư vấn tài chính</span><span>Bản 0.3 · Laptop không phải bản sao lưu</span></footer>
+        <footer class="page-footer"><span>VND · Theo tháng</span><span>Bản 0.4 · Laptop không phải bản sao lưu</span></footer>
       </main>
     </div>
   </div>

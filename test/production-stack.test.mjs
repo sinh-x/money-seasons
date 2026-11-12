@@ -29,6 +29,23 @@ test('production prefix profiles are finite and private pins defeat ambient over
     assert.equal(productionEnvironment(prefixed).MONEY_SEASONS_PROXY_PROFILE, 'tailnet-local');
   } finally { if (before === undefined) delete process.env.MONEY_SEASONS_BASE_PATH; else process.env.MONEY_SEASONS_BASE_PATH = before; }
 });
+test('production member mode is explicit, separated and adds only its guarded overlay', () => {
+  const members = { ...settings(), MONEY_SEASONS_AUTH_MODE: 'members', MONEY_SEASONS_MEMBERS_DIR: '/private/production/members', MONEY_SEASONS_ROLES_FILE: '/private/production/roles/roles.json' };
+  assert.deepEqual({ ...productionSettings(text(members)) }, members);
+  for (const change of [{ MONEY_SEASONS_AUTH_MODE: 'insecure' }, { MONEY_SEASONS_MEMBERS_DIR: '' }, { MONEY_SEASONS_ROLES_FILE: '' }, { MONEY_SEASONS_MEMBERS_DIR: members.MONEY_SEASONS_DATA_DIR }, { MONEY_SEASONS_ROLES_FILE: members.MONEY_SEASONS_MEMBERS_DIR + '/roles.json' }, { MONEY_SEASONS_ROLES_FILE: members.MONEY_SEASONS_PASSPHRASE_FILE }, { MONEY_SEASONS_MEMBERS_DIR: '/relative/../members' }, { MONEY_SEASONS_AUTH_MODE: 'legacy' }]) assert.throws(() => productionSettings(text({ ...members, ...change })));
+  assert.ok(productionArgs(root, ['config'], members).includes(root + '/compose.production-members.yaml'));
+  assert.ok(!productionArgs(root, ['config'], settings()).includes(root + '/compose.production-members.yaml'));
+  assert.ok(productionProbeRoutes(members).some(([route, status]) => route === '/api/home' && status === 401));
+  const c = container();
+  c.Mounts.push({ Type: 'bind', Destination: '/members', Source: members.MONEY_SEASONS_MEMBERS_DIR, RW: true }, { Type: 'bind', Destination: '/run/private/roles.json', Source: members.MONEY_SEASONS_ROLES_FILE, RW: false });
+  c.Config.Env = ['MONEY_SEASONS_AUTH_MODE=members', 'MONEY_SEASONS_MEMBERS_DIR=/members', 'MONEY_SEASONS_ROLES_FILE=/run/private/roles.json', 'MONEY_SEASONS_BASE_PATH=', 'MONEY_SEASONS_ORIGINS=https://localhost:3443', 'MONEY_SEASONS_COOKIE_NAME=ms_session'];
+  assert.equal(verifyProductionContainer(c, { root, config: members }), 'web');
+  assert.equal(productionProfileMatches(c, members), true);
+  assert.equal(productionProfileMatches(c, settings()), false);
+  assert.throws(() => verifyProductionContainer(c, { root, config: settings() }));
+  c.Mounts.at(-1).RW = true;
+  assert.throws(() => verifyProductionContainer(c, { root, config: members }));
+});
 test('production argv uses canonical base plus tracked local-HTTPS overlay, no dotenv/project fallback', () => {
   const args = productionArgs(root, ['up']);
   assert.ok(args.includes('/dev/null')); assert.ok(args.includes(productionProject));

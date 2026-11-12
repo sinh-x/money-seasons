@@ -14,7 +14,12 @@ Do not work directly on `main` or `develop`, force-push shared branches, or merg
 
 ## Local setup
 
-This repository currently has no remote. Local `main` and `develop` have been created; the canonical working tree uses `develop`. Start new work on a `feature/*` branch as described below.
+The repository now has GitHub origin `https://github.com/sinh-x/money-seasons.git`.
+Both `main` (release) and `develop` (integration) exist. Preserve their histories;
+feature PRs target `develop`, with reviewed release promotion to `main`. The
+canonical checkout may be on `main` for the guarded production workflow, so inspect
+its branch/status rather than assuming it is always on `develop`. Start new work
+in an admitted feature checkout as described below.
 
 Git Flow configuration lives in `.git/config`, **not in tracked files**, so repeat the following for each clone if using the optional `git-flow` CLI. Ordinary Git commands below do not require that tool.
 
